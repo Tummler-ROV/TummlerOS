@@ -42,8 +42,6 @@ class ArduPilotManager(metaclass=Singleton):
     def __init__(self) -> None:
         self.settings = Settings()
         self.settings.create_app_folders()
-        self.mavlink_manager = MavlinkManager()
-        self.mavlink_manager.set_logdir(self.settings.log_path)
         self._current_board: Optional[FlightController] = None
 
         # Load settings and do the initial configuration
@@ -53,7 +51,15 @@ class ArduPilotManager(metaclass=Singleton):
         else:
             self.settings.create_settings_file()
 
+    async def setup(self) -> None:
+        # This is the logical continuation of __init__(), extracted due to its async nature
         self.configuration = deepcopy(self.settings.content)
+        self.mavlink_manager = MavlinkManager(self.load_preferred_router())
+        if not self.load_preferred_router():
+            await self.set_preferred_router(self.mavlink_manager.available_interfaces()[0].name())
+            logger.info(f"Setting {self.mavlink_manager.available_interfaces()[0].name()} as preferred router.")
+        self.mavlink_manager.set_logdir(self.settings.log_path)
+
         self._load_endpoints()
         self.ardupilot_subprocess: Optional[Any] = None
         self.firmware_manager = FirmwareManager(
@@ -177,7 +183,7 @@ class ArduPilotManager(metaclass=Singleton):
             return f"--defaults {default_params_path}"
         return ""
 
-    def start_linux_board(self, board: FlightController) -> None:
+    async def start_linux_board(self, board: FlightController) -> None:
         self._current_board = board
         if not self.firmware_manager.is_firmware_installed(self._current_board):
             if board.platform == Platform.Navigator:
@@ -240,19 +246,22 @@ class ArduPilotManager(metaclass=Singleton):
             cwd=self.settings.firmware_folder,
         )
 
-        self.start_mavlink_manager(master_endpoint)
+        await self.start_mavlink_manager(master_endpoint)
 
-    def start_serial(self, board: FlightController) -> None:
+    async def start_serial(self, board: FlightController) -> None:
         if not board.path:
             raise ValueError(f"Could not find device path for board {board.name}.")
         self._current_board = board
-        self.start_mavlink_manager(
+        baudrate = 115200
+        if "px4" in board.name.lower():
+            baudrate = 57600
+        await self.start_mavlink_manager(
             Endpoint(
                 name="Master",
                 owner=self.settings.app_name,
                 connection_type=EndpointType.Serial,
                 place=board.path,
-                argument=115200,
+                argument=baudrate,
                 protected=True,
             )
         )
@@ -270,7 +279,22 @@ class ArduPilotManager(metaclass=Singleton):
         self.set_sitl_frame(frame)
         return frame
 
-    def start_sitl(self) -> None:
+    async def set_preferred_router(self, router: str) -> None:
+        self.settings.preferred_router = router
+        self.configuration["preferred_router"] = router
+        self.settings.save(self.configuration)
+        await self.mavlink_manager.set_preferred_router(router)
+
+    def load_preferred_router(self) -> Optional[str]:
+        try:
+            return self.configuration["preferred_router"]  # type: ignore
+        except KeyError:
+            return None
+
+    def get_available_routers(self) -> List[str]:
+        return [router.name() for router in self.mavlink_manager.available_interfaces()]
+
+    async def start_sitl(self) -> None:
         self._current_board = BoardDetector.detect_sitl()
         if not self.firmware_manager.is_firmware_installed(self._current_board):
             self.firmware_manager.install_firmware_from_params(Vehicle.Sub, self._current_board)
@@ -287,7 +311,7 @@ class ArduPilotManager(metaclass=Singleton):
         master_endpoint = Endpoint(
             name="Master",
             owner=self.settings.app_name,
-            connection_type=EndpointType.TCPServer,
+            connection_type=EndpointType.TCPClient,
             place="127.0.0.1",
             argument=5760,
             protected=True,
@@ -309,9 +333,9 @@ class ArduPilotManager(metaclass=Singleton):
             cwd=self.settings.firmware_folder,
         )
 
-        self.start_mavlink_manager(master_endpoint)
+        await self.start_mavlink_manager(master_endpoint)
 
-    def start_mavlink_manager(self, device: Endpoint) -> None:
+    async def start_mavlink_manager(self, device: Endpoint) -> None:
         default_endpoints = [
             Endpoint(
                 name="GCS Server Link",
@@ -367,7 +391,7 @@ class ArduPilotManager(metaclass=Singleton):
                 pass
             except Exception as error:
                 logger.warning(str(error))
-        self.mavlink_manager.start(device)
+        await self.mavlink_manager.start(device)
 
     @staticmethod
     def available_boards(include_bootloaders: bool = False) -> List[FlightController]:
@@ -449,11 +473,22 @@ class ArduPilotManager(metaclass=Singleton):
             try:
                 logger.debug(f"Killing Ardupilot process {process.name()}::{process.pid}.")
                 process.kill()
-                await asyncio.sleep(0.5)
             except Exception as error:
-                raise ArdupilotProcessKillFail(f"Could not kill {process.name()}::{process.pid}.") from error
+                logger.debug(f"Could not kill Ardupilot: {error}")
+
+            try:
+                process.wait(3)
+                continue
+            except Exception as error:
+                logger.debug(f"Ardupilot appears to be running.. going to call pkill: {error}")
+
+            try:
+                subprocess.run(["pkill", "-9", process.pid], check=True)
+            except Exception as error:
+                raise ArdupilotProcessKillFail(f"Failed to kill {process.name()}::{process.pid}.") from error
 
     async def kill_ardupilot(self) -> None:
+        self.should_be_running = False
         if not self.current_board or self.current_board.platform != Platform.SITL:
             try:
                 logger.info("Disarming vehicle.")
@@ -462,23 +497,21 @@ class ArduPilotManager(metaclass=Singleton):
             except Exception as error:
                 logger.warning(f"Could not disarm vehicle: {error}. Proceeding with kill.")
 
-        try:
-            # TODO: Add shutdown command on HAL_SITL and HAL_LINUX, changing terminate/prune
-            # logic with a simple "self.vehicle_manager.shutdown_vehicle()"
-            logger.info("Terminating Ardupilot subprocess.")
-            await self.terminate_ardupilot_subprocess()
-            logger.info("Ardupilot subprocess terminated.")
-            logger.info("Pruning Ardupilot's system processes.")
-            await self.prune_ardupilot_processes()
-            logger.info("Ardupilot's system processes pruned.")
+        # TODO: Add shutdown command on HAL_SITL and HAL_LINUX, changing terminate/prune
+        # logic with a simple "self.vehicle_manager.shutdown_vehicle()"
+        logger.info("Terminating Ardupilot subprocess.")
+        await self.terminate_ardupilot_subprocess()
+        logger.info("Ardupilot subprocess terminated.")
+        logger.info("Pruning Ardupilot's system processes.")
+        await self.prune_ardupilot_processes()
+        logger.info("Ardupilot's system processes pruned.")
 
-            logger.info("Stopping Mavlink manager.")
-            self.mavlink_manager.stop()
-            logger.info("Mavlink manager stopped.")
-        finally:
-            self.should_be_running = False
+        logger.info("Stopping Mavlink manager.")
+        await self.mavlink_manager.stop()
+        logger.info("Mavlink manager stopped.")
 
     async def start_ardupilot(self) -> None:
+        await self.setup()
         try:
             available_boards = self.available_boards()
             if not available_boards:
@@ -490,11 +523,11 @@ class ArduPilotManager(metaclass=Singleton):
             logger.info(f"Using {flight_controller.name} flight-controller.")
 
             if flight_controller.platform.type == PlatformType.Linux:
-                self.start_linux_board(flight_controller)
+                await self.start_linux_board(flight_controller)
             elif flight_controller.platform.type == PlatformType.Serial:
-                self.start_serial(flight_controller)
+                await self.start_serial(flight_controller)
             elif flight_controller.platform == Platform.SITL:
-                self.start_sitl()
+                await self.start_sitl()
             else:
                 raise RuntimeError(f"Invalid board type: {flight_controller}")
         finally:
@@ -533,26 +566,26 @@ class ArduPilotManager(metaclass=Singleton):
         """Get all endpoints from the mavlink manager."""
         return self.mavlink_manager.endpoints()
 
-    def add_new_endpoints(self, new_endpoints: Set[Endpoint]) -> None:
+    async def add_new_endpoints(self, new_endpoints: Set[Endpoint]) -> None:
         """Add multiple endpoints to the mavlink manager and save them on the configuration file."""
         logger.info(f"Adding endpoints {[e.name for e in new_endpoints]} and updating settings file.")
         self.mavlink_manager.add_endpoints(new_endpoints)
         self._save_current_endpoints()
-        self.mavlink_manager.restart()
+        await self.mavlink_manager.restart()
 
-    def remove_endpoints(self, endpoints_to_remove: Set[Endpoint]) -> None:
+    async def remove_endpoints(self, endpoints_to_remove: Set[Endpoint]) -> None:
         """Remove multiple endpoints from the mavlink manager and save them on the configuration file."""
         logger.info(f"Removing endpoints {[e.name for e in endpoints_to_remove]} and updating settings file.")
         self.mavlink_manager.remove_endpoints(endpoints_to_remove)
         self._save_current_endpoints()
-        self.mavlink_manager.restart()
+        await self.mavlink_manager.restart()
 
-    def update_endpoints(self, endpoints_to_update: Set[Endpoint]) -> None:
+    async def update_endpoints(self, endpoints_to_update: Set[Endpoint]) -> None:
         """Update multiple endpoints from the mavlink manager and save them on the configuration file."""
         logger.info(f"Modifying endpoints {[e.name for e in endpoints_to_update]} and updating settings file.")
         self.mavlink_manager.update_endpoints(endpoints_to_update)
         self._save_current_endpoints()
-        self.mavlink_manager.restart()
+        await self.mavlink_manager.restart()
 
     def get_available_firmwares(self, vehicle: Vehicle, platform: Platform) -> List[Firmware]:
         return self.firmware_manager.get_available_firmwares(vehicle, platform)

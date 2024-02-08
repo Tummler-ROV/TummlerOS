@@ -14,15 +14,18 @@ setup(
     version="0.2.0",
     description="Ping service for BlueRobotics' Ping1D and Pìng360",
     license="MIT",
+    py_modules=[],
     install_requires=[
         "bluerobotics-ping == 0.1.5",
         "bridges == 0.1.0",
         "commonwealth == 0.1.0",
-        "fastapi == 0.63.0",
+        "fastapi == 0.105.0",
+        # Enforce anyio fastapi subdependency to avoid conflict with starlette
+        "anyio == 3.7.1",
         "fastapi-versioning == 0.9.1",
         "loguru == 0.5.3",
         "pyserial == 3.5",
-        "starlette == 0.13.6",
+        "starlette == 0.27.0",
         "uvicorn == 0.13.4",
     ],
 )

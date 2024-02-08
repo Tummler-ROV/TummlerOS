@@ -50,12 +50,15 @@
               If your vehicle is already set up, you can skip this wizard.
             </v-card>
             <v-row class="pa-5 justify-space-between">
-              <v-btn
-                color="warning darken"
-                @click="setWizardVersion(); cancel()"
-              >
-                Skip Wizard
-              </v-btn>
+              <v-row class="pl-3 pt-2">
+                <v-btn
+                  color="warning darken"
+                  class="mr-5"
+                  @click="show_skip = true"
+                >
+                  Skip Wizard
+                </v-btn>
+              </v-row>
               <v-btn
                 color="primary"
                 @click="nextStep()"
@@ -108,19 +111,16 @@
               </v-icon>
             </div>
             <v-row class="pa-5">
-              <v-btn
-                color="warning"
-                @click="cancel"
-              >
-                Ask me later
-              </v-btn>
+              <v-row class="pl-3 pt-2">
+                <v-btn
+                  color="warning darken"
+                  class="mr-5"
+                  @click="show_skip = true"
+                >
+                  Skip Wizard
+                </v-btn>
+              </v-row>
               <v-spacer />
-              <v-btn
-                color="error"
-                @click="setWizardVersion(); cancel()"
-              >
-                Don't show again
-              </v-btn>
             </v-row>
           </v-stepper-content>
 
@@ -168,15 +168,15 @@
               <v-btn
                 :color="retry_count == 0 ? 'success' : 'error'"
                 :loading="apply_in_progress"
-                :disabled="apply_in_progress"
+                :disabled="apply_in_progress || apply_done"
                 @click="applyConfigurations()"
               >
-                {{ retry_count == 0 ? "Apply" : "Retry" }}
+                {{ retry_count == 0 ? "Apply" : apply_done ? "Done" : "Retry" }}
               </v-btn>
               <v-btn
                 v-if="allow_abort"
                 :loading="apply_in_progress"
-                :disabled="apply_in_progress"
+                :disabled="apply_in_progress || apply_done"
                 color="warning"
                 @click="abort()"
               >
@@ -215,6 +215,39 @@
         </v-stepper-items>
       </v-stepper>
     </v-card>
+    <v-dialog
+      v-model="show_skip"
+      width="fit-content"
+      max-width="80%"
+    >
+      <v-card>
+        <v-card-title class="text-lg-h4 font-weight-bold" style="justify-content: center;">
+          Aborting wizard
+        </v-card-title>
+        <v-card-text class="text-xs-center" style="max-width: 33rem;">
+          Proceeding with the setup wizard is crucial for proper vehicle configuration.
+
+          Are you certain that you wish to skip this step?
+        </v-card-text>
+        <v-card-actions class="justify-center pa-4">
+          <v-btn
+            v-tooltip="'The wizard will show again during BlueOS usage'"
+            color="warning"
+            @click="skipWizard()"
+          >
+            Remind me later
+          </v-btn>
+          <v-spacer />
+          <v-btn
+            v-tooltip="'The wizard will only show if BlueOS is updated and further configuration is necessary'"
+            color="error"
+            @click="skipWizard(false)"
+          >
+            Abort wizard
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-dialog>
 </template>
 
@@ -285,6 +318,7 @@ export default Vue.extend({
       error_message: 'The operation failed!',
       apply_status: ApplyStatus.Waiting,
       mdns_name: 'blueos',
+      show_skip: false,
       should_open: false,
       step_number: 0,
       sub_model: get_model('sub', 'bluerov'),
@@ -393,6 +427,7 @@ export default Vue.extend({
             message: undefined,
             done: false,
             skip: false,
+            started: false,
           },
           {
             title: 'Set vehicle hostname',
@@ -401,6 +436,7 @@ export default Vue.extend({
             message: undefined,
             done: false,
             skip: false,
+            started: false,
           },
           {
             title: 'Set vehicle image',
@@ -409,6 +445,7 @@ export default Vue.extend({
             message: undefined,
             done: false,
             skip: false,
+            started: false,
           },
           ...this.setup_configurations,
         ]
@@ -417,10 +454,12 @@ export default Vue.extend({
     async applyConfigurations() {
       this.apply_status = ApplyStatus.InProgress
       this.apply_status = await Promise.all(this.configurations.map(async (config) => {
+        config.started = true
         config.message = undefined
         if (!config.done && !config.skip) {
           config.message = await config.promise()
           config.done = config.message === undefined
+          config.started = false
         }
         return config
       })).then((configs) => configs.every((config) => config.done || config.skip))
@@ -430,7 +469,7 @@ export default Vue.extend({
     setupBoat() {
       this.vehicle_type = Vehicle.Rover
       this.vehicle_name = 'BlueBoat'
-      this.vehicle_image = '/vehicles/images/bb120.png'
+      this.vehicle_image = 'assets/vehicles/images/bb120.png'
       this.step_number += 1
 
       this.vehicle_configuration_pages = [
@@ -444,6 +483,7 @@ export default Vue.extend({
           message: undefined,
           done: false,
           skip: false,
+          started: false,
         },
         {
           title: 'Disable Wi-Fi hotspot',
@@ -452,6 +492,7 @@ export default Vue.extend({
           message: undefined,
           done: false,
           skip: false,
+          started: false,
         },
         {
           title: 'Disable smart Wi-Fi hotspot',
@@ -460,6 +501,7 @@ export default Vue.extend({
           message: undefined,
           done: false,
           skip: false,
+          started: false,
         },
       ]
     },
@@ -478,7 +520,7 @@ export default Vue.extend({
     setupROV() {
       this.vehicle_type = Vehicle.Sub
       this.vehicle_name = 'BlueROV'
-      this.vehicle_image = '/vehicles/images/bluerov2.png'
+      this.vehicle_image = 'assets/vehicles/images/bluerov2.png'
       this.step_number += 1
 
       this.vehicle_configuration_pages = [
@@ -494,6 +536,13 @@ export default Vue.extend({
           skip: false,
         },
       ]
+    },
+    async skipWizard(remindLater = true) {
+      if (!remindLater) {
+        this.setWizardVersion()
+      }
+      this.cancel()
+      this.show_skip = false
     },
     async setWizardVersion(): Promise<ConfigurationStatus> {
       const failed = 'Configuration done, but failed to set wizard version.'

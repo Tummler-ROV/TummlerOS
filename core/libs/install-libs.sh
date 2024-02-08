@@ -7,21 +7,29 @@ BUILD_PACKAGES=(
     g++
 )
 
+echo "Target architecture: $TARGETARCH"
+echo "Target variant: $TARGETVARIANT"
+
+# psutil requires BUILD_PACKAGES to build to all platforms
 apt update
 apt install -y --no-install-recommends ${BUILD_PACKAGES[*]}
 
-# Pre-Build dependencies:
-# For convenience, we build ourselves the .wheel packages for dependencies
-# which have no armv7 wheel in pypi. This saves a lot of build time in docker
-if [[ "$(uname -m)" == "armv7l"* ]]; then
-    pip install https://s3.amazonaws.com/downloads.bluerobotics.com/companion-docker/wheels/aiohttp-3.7.4-cp39-cp39-linux_armv7l.whl
-fi
+# Piwheels is a Python package repository providing Arm platform wheels (pre-compiled binary Python packages)
+# specifically for the Raspberry Pi, making pip installations much faster.
+# Packages are natively compiled on Raspberry Pi 3 and 4 hardware
+# Add it regardless of the platform, as it is a fallback index, and will only be used if the package is not found on the main index.
+echo "Configuring pip to use piwheels"
+echo "[global]" >> /etc/pip.conf
+echo "extra-index-url=https://www.piwheels.org/simple" >> /etc/pip.conf
 
 CURRENT_PATH=$(dirname "$0")
 
 # Install libraries
-python3 $CURRENT_PATH/bridges/setup.py install
-python3 $CURRENT_PATH/commonwealth/setup.py install
+
+# install pykson = {git = "https://github.com/patrickelectric/pykson.git", rev = "fcab71c1eadd6c6b730ca21a5eecb3bf9c374507"}
+pip3 install https://codeload.github.com/patrickelectric/pykson/zip/fcab71c1eadd6c6b730ca21a5eecb3bf9c374507
+pip3 install -e $CURRENT_PATH/bridges
+pip3 install -e $CURRENT_PATH/commonwealth
 
 apt -y remove ${BUILD_PACKAGES[*]}
 apt -y autoremove

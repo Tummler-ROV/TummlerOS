@@ -2,16 +2,19 @@
 name = "blueos-docker"
 version = "0.0.1"
 description = "Blue Robotics BlueOS computer project"
-authors = ["Blue Robotics <software@bluerobotics.com>"]
+authors = ["Software Department <software@bluerobotics.com>"]
 license = "MIT"
 
+[tool.setuptools]
+py-modules = []
+
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.11"
 pytest-xdist = "^3.3.1"
 toml = "^0.10.2"
 
 [tool.poetry.dev-dependencies]
-black = "^22.1.0"
+black = "==22.3.0"
 isort = "^5.8"
 pylint = "^2.8"
 mypy = "1.4.1"
@@ -34,7 +37,7 @@ pytest-asyncio = "0.14.0"
 pytest-mock = "3.10.0"
 pytest-timeout = "2.1.0"
 ruff = "0.0.288"
-pyelftools = "0.28"
+pyelftools = "0.30"
 types-requests = "^2.31.0.2"
 types-tabulate = "^0.9.0.3"
 

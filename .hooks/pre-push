@@ -14,6 +14,12 @@ command -v shellcheck >/dev/null 2>&1 || {
     exit 1
 }
 
+# Check if parallel is installed
+command -v parallel >/dev/null 2>&1 || {
+    echo >&2 "parallel is not installed. Aborting. Please install it and try again."
+    exit 1
+}
+
 pipenv install poetry
 pipenv run poetry install
 # download some required files if they are not present
@@ -66,7 +72,7 @@ echo "Running shellcheck..."
 #SC2046: Allow word splitting
 #SC2048: Allow word splitting
 #SC2086: Allow word splitting
-git ls-files '*.sh' | xargs --max-lines=1 shellcheck --exclude=SC2005,SC2015,SC2046,SC2048,SC2086
+git ls-files '*.sh' | xargs -L 1 shellcheck --exclude=SC2005,SC2015,SC2046,SC2048,SC2086
 
 echo "Running isort.."
 # Run isort for each python project
@@ -88,10 +94,10 @@ pipenv run ruff $python_files
 echo "Running pylint.."
 pipenv run pylint $python_files
 
-echo "Running pytest.."
-pipenv run pytest -n 10 --cov="$repository_path" --cov-report html
-
 echo "Running mypy.."
 git ls-files '*setup.py' | parallel 'pipenv run mypy $(dirname {}) --cache-dir $(dirname {})'
+
+echo "Running pytest.."
+pipenv run pytest -n 10 --cov="$repository_path" --cov-report html
 
 exit 0

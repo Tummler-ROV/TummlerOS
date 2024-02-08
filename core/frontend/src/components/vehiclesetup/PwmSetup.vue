@@ -9,6 +9,11 @@
           <vehicle-viewer :highlight="highlight" :transparent="true" :autorotate="false" />
         </v-card>
         <v-card class="mt-3">
+          <v-overlay :value="!has_focus">
+            <div class="text-h4 py-12 px-12">
+              Motor test is disabled when the page is out of focus
+            </div>
+          </v-overlay>
           <v-simple-table
             dense
           >
@@ -20,7 +25,7 @@
                   </th>
                   <th>
                     <v-switch
-                      v-model="is_armed"
+                      v-model="desired_armed_state"
                       :loading="desired_armed_state !== (is_armed) ? 'warning' : null"
                       :disabled="!is_manual"
                       class="mx-1 flex-grow-0"
@@ -165,9 +170,9 @@ const rover_function_map = {
 
 const param_value_map = {
   Submarine: {
-    RCIN8: 'Lights 1',
-    RCIN9: 'Lights 2',
-    RCIN10: 'Video Switch',
+    RCIN9: 'Lights 1',
+    RCIN10: 'Lights 2',
+    RCIN11: 'Video Switch',
   },
 } as Dictionary<Dictionary<string>>
 
@@ -188,6 +193,8 @@ export default Vue.extend({
       motor_writer_interval: undefined as undefined | number,
       desired_armed_state: false,
       arming_timeout: undefined as number | undefined,
+      has_focus: true,
+      motors_zeroed: false,
     }
   },
   computed: {
@@ -248,25 +255,38 @@ export default Vue.extend({
         }
       })
     },
+    vehicle_id(): number {
+      return autopilot_data.system_id
+    },
     is_armed(): boolean {
-      const heartbeat = mavlink_store_get(mavlink, 'HEARTBEAT.messageData.message') as Message.Heartbeat
-      return Boolean(heartbeat.base_mode.bits & MavModeFlag.MAV_MODE_FLAG_SAFETY_ARMED)
+      const heartbeat = mavlink_store_get(
+        mavlink,
+        'HEARTBEAT.messageData.message',
+        this.vehicle_id,
+        1,
+      ) as Message.Heartbeat
+      return Boolean(heartbeat?.base_mode.bits & MavModeFlag.MAV_MODE_FLAG_SAFETY_ARMED)
     },
     is_manual(): boolean {
-      const heartbeat = mavlink_store_get(mavlink, 'HEARTBEAT.messageData.message') as Message.Heartbeat
+      const heartbeat = mavlink_store_get(
+        mavlink,
+        'HEARTBEAT.messageData.message',
+        this.vehicle_id,
+        1,
+      ) as Message.Heartbeat
 
       // Legacy manual mode
-      if (!(heartbeat.base_mode.bits & MavModeFlag.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED)) {
-        return Boolean(heartbeat.base_mode.bits & MavModeFlag.MAV_MODE_FLAG_MANUAL_INPUT_ENABLED)
+      if (!(heartbeat?.base_mode.bits & MavModeFlag.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED)) {
+        return Boolean(heartbeat?.base_mode.bits & MavModeFlag.MAV_MODE_FLAG_MANUAL_INPUT_ENABLED)
       }
 
       if (this.is_rover) {
         const rover_custom_mode_manual = 0
-        return Boolean(heartbeat.custom_mode === rover_custom_mode_manual)
+        return Boolean(heartbeat?.custom_mode === rover_custom_mode_manual)
       }
       if (this.is_sub) {
         const sub_custom_mode_manual = 19
-        return Boolean(heartbeat.custom_mode === sub_custom_mode_manual)
+        return Boolean(heartbeat?.custom_mode === sub_custom_mode_manual)
       }
 
       return false
@@ -313,13 +333,29 @@ export default Vue.extend({
     this.motor_writer_interval = setInterval(this.write_motors, 100)
     mavlink.setMessageRefreshRate({ messageName: 'SERVO_OUTPUT_RAW', refreshRate: 10 })
     this.desired_armed_state = this.is_armed
+    this.installListeners()
   },
   beforeDestroy() {
     clearInterval(this.motor_zeroer_interval)
     clearInterval(this.motor_writer_interval)
     mavlink.setMessageRefreshRate({ messageName: 'SERVO_OUTPUT_RAW', refreshRate: 1 })
+    this.uninstallListeners()
   },
   methods: {
+    focusListener() {
+      this.has_focus = true
+    },
+    blurListener() {
+      this.has_focus = false
+    },
+    installListeners() {
+      window.addEventListener('focus', this.focusListener)
+      window.addEventListener('blur', this.blurListener)
+    },
+    uninstallListeners() {
+      window.removeEventListener('focus', this.focusListener)
+      window.removeEventListener('blur', this.blurListener)
+    },
     styleForMotorBar(value: number): string {
       const percent = (value - 1500) / 10
       const left = percent < 0 ? 50 + percent : 50
@@ -337,16 +373,24 @@ export default Vue.extend({
     },
     printParam,
     zero_motors() {
+      if (!this.has_focus && this.motors_zeroed) {
+        return
+      }
       for (const motor of this.available_motors) {
         this.motor_targets[motor.target] = 1500
       }
+      this.motors_zeroed = true
     },
     async write_motors() {
+      if (!this.has_focus) {
+        return
+      }
       if (this.is_armed && this.desired_armed_state) {
         for (const [motor, value] of Object.entries(this.motor_targets)) {
           this.doMotorTest(parseInt(motor, 10), value)
         }
       }
+      this.motors_zeroed = false
     },
     restart_motor_zeroer() {
       clearInterval(this.motor_zeroer_interval)
@@ -371,10 +415,9 @@ export default Vue.extend({
         console.warn('Disarming failed!')
       }, 5000)
     },
-    arm_disarm_switch_change(): void {
-      this.desired_armed_state = !this.is_armed
+    arm_disarm_switch_change(should_arm: boolean): void {
       // eslint-disable-next-line no-unused-expressions
-      this.is_armed ? this.disarm() : this.arm()
+      should_arm ? this.arm() : this.disarm()
     },
     armDisarm(arm: boolean, force: boolean): void {
       mavlink2rest.sendMessage(

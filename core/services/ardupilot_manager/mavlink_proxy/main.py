@@ -1,5 +1,6 @@
 #!/bin/env python
 import argparse
+import asyncio
 import sys
 import time
 from pathlib import Path
@@ -38,22 +39,30 @@ if __name__ == "__main__":
     parser.add_argument(
         "--tool",
         dest="tool",
-        type=str,
-        default=interfaces[0].name(),
         choices=[interface.name() for interface in interfaces],
-        help="Selected the desired tool to use, the default will be the first one available.",
+        help="Select the desired tool to use, this will override the one in the settings file."
+        + " The default will be the first one available.",
     )
 
     args = parser.parse_args()
 
-    tool = AbstractRouter.get_interface(args.tool)()
-    logger.info(f"Starting {tool.name()} version {tool.version()}.")
+    async def main() -> None:
+        tool = AbstractRouter.get_interface(args.tool)()
 
-    manager.use(tool)
-    manager.add_endpoints(args.output.split(":"))
+        if tool:
+            manager.use(tool)
+        else:
+            logger.warning(f"No tool selected. Falling back to {interfaces[0]}")
+            manager.use(interfaces[0]())
 
-    logger.info(f"Command: {manager.command_line()}")
-    manager.start(args.master.split(":"))
-    while manager.is_running():
-        time.sleep(1)
-    logger.info("Done.")
+        logger.info(f"Starting {tool.name()} version {tool.version()}.")
+
+        manager.add_endpoints(args.output.split(":"))
+
+        logger.info(f"Command: {manager.command_line()}")
+        await manager.start(args.master.split(":"))
+        while manager.is_running():
+            time.sleep(1)
+        logger.info("Done.")
+
+    asyncio.run(main())

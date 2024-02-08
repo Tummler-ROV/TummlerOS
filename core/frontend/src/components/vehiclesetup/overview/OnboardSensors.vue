@@ -36,7 +36,36 @@
               </td>
               <td>{{ imu.busType }} {{ imu.bus }}</td>
               <td>{{ `0x${imu.address}` }}</td>
-              <td>{{ imu_is_calibrated[imu.param] ? 'Calibrated' : 'Needs Calibration' }}</td>
+              <td>
+                <v-icon
+                  v-if="imu_is_calibrated[imu.param]"
+                  v-tooltip="'Sensor is callibrated and good to use'"
+                  color="green"
+                >
+                  mdi-emoticon-happy-outline
+                </v-icon>
+                <v-icon
+                  v-else
+                  v-tooltip="'Sensor needs to be calibrated'"
+                  color="red"
+                >
+                  mdi-emoticon-sad-outline
+                </v-icon>
+                <v-icon
+                  v-if="imu_temperature_is_calibrated[imu.param]"
+                  v-tooltip="'Sensor thermometer is calibrated and good to use'"
+                  color="green"
+                >
+                  mdi-thermometer-check
+                </v-icon>
+                <v-icon
+                  v-else
+                  v-tooltip="'Sensor thermometer needs to be calibrated'"
+                  color="red"
+                >
+                  mdi-thermometer-off
+                </v-icon>
+              </td>
             </tr>
             <tr
               v-for="compass in compasses"
@@ -48,7 +77,22 @@
               </td>
               <td>{{ compass.busType }} {{ compass.bus }}</td>
               <td>{{ `0x${compass.address}` }}</td>
-              <td>{{ compass_is_calibrated[compass.param] ? 'Calibrated' : 'Needs Calibration' }}</td>
+              <td>
+                <v-icon
+                  v-if="compass_is_calibrated[compass.param]"
+                  v-tooltip="'Sensor is callibrated and good to use'"
+                  color="green"
+                >
+                  mdi-emoticon-happy-outline
+                </v-icon>
+                <v-icon
+                  v-else
+                  v-tooltip="'Sensor needs to be calibrated'"
+                  color="red"
+                >
+                  mdi-emoticon-sad-outline
+                </v-icon>
+              </td>
             </tr>
             <tr
               v-for="baro in baros"
@@ -185,6 +229,20 @@ export default Vue.extend({
       }
       return results
     },
+    imu_temperature_is_calibrated(): Dictionary<boolean> {
+      const results = {} as Dictionary<boolean>
+      for (const imu of this.imus) {
+        let param_radix = imu.param.split('_ID')[0]
+        // CALTEMP parameters contains ID for the first sensor, _ID does not, so we need to add it
+        if (!/\d$/.test(param_radix)) {
+          param_radix += '1'
+        }
+        const name = `${param_radix}_CALTEMP`
+        const parameter = autopilot_data.parameter(name)
+        results[imu.param] = parameter !== undefined && parameter.value !== -300
+      }
+      return results
+    },
     is_water_baro(): Dictionary<boolean> {
       const results = {} as Dictionary<boolean>
       for (const compass of this.compasses) {
@@ -224,8 +282,8 @@ export default Vue.extend({
     },
   },
   mounted() {
-    mavlink.setMessageRefreshRate({ messageName: 'SCALED_PRESSURE', refreshRate: 1 })
-    mavlink.setMessageRefreshRate({ messageName: 'SCALED_PRESSURE2', refreshRate: 1 })
+    mavlink.setMessageRefreshRate({ messageName: 'SCALED_PRESSURE$', refreshRate: 1 })
+    mavlink.setMessageRefreshRate({ messageName: 'SCALED_PRESSURE2$', refreshRate: 1 })
     mavlink.setMessageRefreshRate({ messageName: 'VFR_HUD', refreshRate: 1 })
   },
   methods: {

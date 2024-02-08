@@ -1,5 +1,6 @@
 import mavlink2rest from '@/libs/MAVLink2Rest'
 // eslint-disable-next-line import/no-cycle
+import ardupilot_data from '@/store/autopilot'
 import { AutopilotStore } from '@/store/autopilot'
 
 import ParametersTable from './parameter-table'
@@ -73,8 +74,8 @@ export default class ParameterFetcher {
         },
         message: {
           type: 'PARAM_REQUEST_LIST',
-          target_system: 0,
-          target_component: 0,
+          target_system: ardupilot_data.system_id,
+          target_component: 1,
         },
       },
     )

@@ -98,77 +98,70 @@
         </p>
       </v-container>
     </v-card>
-    <v-row>
-      <v-col
-        v-if="tab === 1"
-        class="pa-6"
-      >
-        <v-row
-          dense
-        >
-          <v-col
-            v-for="extension in installed_extensions"
-            :key="extension.docker"
-            class="pa-2 col-6"
-          >
-            <installed-extension-card
-              :extension="extension"
-              :loading="extension.loading"
-              :metrics="metricsFor(extension)"
-              :container="getContainer(extension)"
-              :versions="remoteVersions(extension)"
-              :extension-data="remoteVersions(extension)"
-              @edit="openEditDialog"
-              @showlogs="showLogs(extension)"
-              @uninstall="uninstall(extension)"
-              @disable="disable(extension)"
-              @enable="enableAndStart(extension)"
-              @restart="restart(extension)"
-              @update="update"
-            />
-          </v-col>
-        </v-row>
-        <v-container
-          v-if="Object.keys(installed_extensions).isEmpty()"
-          class="text-center"
-        >
-          <p
-            v-if="dockers_fetch_done"
-            class="text-h6"
-          >
-            No Extensions installed.
-          </p>
-          <p
-            v-else
-            class="text-h6"
-          >
-            Fetching Extensions
-          </p>
-        </v-container>
-        <v-fab-transition>
-          <v-btn
-            :key="'create_button'"
-            color="primary"
-            fab
-            large
-            dark
-            fixed
-            bottom
-            right
-            class="v-btn--example"
-            @click="openCreationDialog"
-          >
-            <v-icon>mdi-plus</v-icon>
-          </v-btn>
-        </v-fab-transition>
-        <creation-dialog
-          v-if="edited_extension"
-          :extension="edited_extension"
-          @extensionChange="createOrUpdateExtension"
-          @closed="clearEditedExtension"
+    <v-card
+      v-if="tab === 1"
+      class="d-flex pa-5"
+      text-align="center"
+    >
+      <div v-if="tab === 1" class="installed-extensions-container">
+        <installed-extension-card
+          v-for="extension in installed_extensions"
+          :key="extension.docker"
+          :extension="extension"
+          :loading="extension.loading"
+          :metrics="metricsFor(extension)"
+          :container="getContainer(extension)"
+          :versions="remoteVersions(extension)"
+          :extension-data="remoteVersions(extension)"
+          class="installed-extension-card"
+          @edit="openEditDialog"
+          @showlogs="showLogs(extension)"
+          @uninstall="uninstall(extension)"
+          @disable="disable(extension)"
+          @enable="enableAndStart(extension)"
+          @restart="restart(extension)"
+          @update="update"
         />
-      </v-col>
-    </v-row>
+      </div>
+      <template
+        v-if="Object.keys(installed_extensions).isEmpty()"
+      >
+        <p v-if="dockers_fetch_failed" class="text-h6" style="margin: auto;">
+          Failed to fetch installed extensions. Make sure the vehicle has internet access and try again.
+        </p>
+        <p
+          v-else-if="dockers_fetch_done"
+          class="text-h6"
+        >
+          No Extensions installed.
+        </p>
+        <template v-else>
+          <spinning-logo size="20%" subtitle="Fetching installed extensions" />
+        </template>
+      </template>
+      <v-fab-transition>
+        <v-btn
+          :key="'create_button'"
+          color="primary"
+          fab
+          large
+          dark
+          fixed
+          bottom
+          right
+          class="v-btn--example"
+          @click="openCreationDialog"
+        >
+          <v-icon>mdi-plus</v-icon>
+        </v-btn>
+      </v-fab-transition>
+      <creation-dialog
+        v-if="edited_extension"
+        :extension="edited_extension"
+        @extensionChange="createOrUpdateExtension"
+        @closed="clearEditedExtension"
+      />
+    </v-card>
   </v-container>
 </template>
 
@@ -177,6 +170,7 @@ import AnsiUp from 'ansi_up'
 import axios from 'axios'
 import Vue from 'vue'
 
+import SpinningLogo from '@/components/common/SpinningLogo.vue'
 import ExtensionCard from '@/components/kraken/ExtensionCard.vue'
 import CreationDialog from '@/components/kraken/ExtensionCreationDialog.vue'
 import ExtensionModal from '@/components/kraken/ExtensionModal.vue'
@@ -204,6 +198,7 @@ export default Vue.extend({
     ExtensionModal,
     PullProgress,
     CreationDialog,
+    SpinningLogo,
   },
   data() {
     return {
@@ -216,6 +211,7 @@ export default Vue.extend({
       running_containers: [] as RunningContainer[],
       manifest: [] as ExtensionData[],
       dockers_fetch_done: false,
+      dockers_fetch_failed: false,
       show_pull_output: false,
       pull_output: '',
       download_percentage: 0,
@@ -242,7 +238,8 @@ export default Vue.extend({
     },
     filteredManifest(): ExtensionData[] {
       if (this.selected_companies.isEmpty() && this.selected_tags.isEmpty()) {
-        return this.manifest
+        // By default we remove examples if nothing is selected
+        return this.manifest.filter((extension) => this.newestVersion(extension.versions)?.type !== 'example')
       }
 
       let { manifest } = this
@@ -417,31 +414,54 @@ export default Vue.extend({
           for (const extension of response.data) {
             this.installed_extensions[extension.identifier] = extension
           }
-          this.dockers_fetch_done = true
+          this.dockers_fetch_failed = false
         })
         .catch((error) => {
           notifier.pushBackError('EXTENSIONS_INSTALLED_FETCH_FAIL', error)
+          this.dockers_fetch_failed = true
+        })
+        .finally(() => {
+          this.dockers_fetch_done = true
         })
     },
-    async showLogs(extension: InstalledExtensionData): Promise<void> {
+    async showLogs(extension: InstalledExtensionData) {
       this.setLoading(extension, true)
-      await back_axios({
+      const ansi = new AnsiUp()
+      this.log_output = ''
+
+      back_axios({
         method: 'get',
         url: `${API_URL}/log`,
         params: {
           container_name: this.getContainerName(extension),
         },
+        onDownloadProgress: (progressEvent) => {
+          const chunk = progressEvent.currentTarget.response
+          this.$set(this, 'log_output', ansi.ansi_to_html(chunk))
+          this.show_log = true
+          this.setLoading(extension, false)
+          this.$nextTick(() => {
+            // TODO: find a better way to scroll to bottom
+            const output = document.querySelector(
+              '#app > div.v-dialog__content.v-dialog__content--active > div',
+            ) as HTMLInputElement
+            if (!output) {
+              return
+            }
+            output.scrollTop = output.scrollHeight
+          })
+        },
         timeout: 30000,
       })
-        .then((response) => {
-          const ansi = new AnsiUp()
-          this.log_output = ansi.ansi_to_html(response.data.join(''))
-          this.show_log = true
+        .then(() => {
+          this.setLoading(extension, false)
         })
         .catch((error) => {
           notifier.pushBackError('EXTENSIONS_LOG_FETCH_FAIL', error)
         })
-      this.setLoading(extension, false)
+        .finally(() => {
+          this.setLoading(extension, false)
+        })
     },
     showModal(extension: ExtensionData) {
       this.show_dialog = true
@@ -613,6 +633,18 @@ export default Vue.extend({
 </script>
 
 <style>
+.installed-extensions-container {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.installed-extension-card {
+  margin: 10px;
+  flex: 1 1 400px;
+}
+
 .jv-code {
   padding: 0px !important;
 }

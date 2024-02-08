@@ -24,6 +24,7 @@ interface messsageRefreshRate {
 
 class MavlinkStore extends VuexModule {
   available_messages: Dictionary<MavlinkMessage> = {}
+  available_identified_messages: Dictionary<Dictionary<MavlinkMessage>> = {}
 
   message_listeners: Dictionary<Listener> = {}
 
@@ -63,7 +64,17 @@ class MavlinkStore extends VuexModule {
     if (message) {
       // TODO: Check if this is the best possible way to update `available_messages`
       // Reference: https://github.com/bluerobotics/blueos-docker/pull/508#discussion_r718729077
-      Vue.set(this.available_messages, message.messageName, message)
+      // We should not use `message.messageName` as dictionary key since it's a regex,
+      // the best approach is to use the message name as key
+      const messageName = (message.messageData.message as any).type
+      const { header } = message.messageData
+      const identifier = `${header.system_id}_${header.component_id}`
+      Vue.set(this.available_messages, messageName, message)
+      // make sure identifier exists
+      if (!(identifier in this.available_identified_messages)) {
+        Vue.set(this.available_identified_messages, identifier, {})
+      }
+      Vue.set(this.available_identified_messages[identifier], messageName, message)
     }
   }
 }

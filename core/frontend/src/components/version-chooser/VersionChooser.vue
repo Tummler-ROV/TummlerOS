@@ -52,8 +52,8 @@
       >
         <h2>Local Versions</h2>
         <version-card
-          v-for="image in local_versions.result.local"
-          :key="`${image.sha}-local`"
+          v-for="(image, index) in local_versions.result.local"
+          :key="`${image.sha}-${index}-local`"
           :image="image"
           :updating="updating_bootstrap"
           :current="image.tag === current_version?.tag && image.repository === current_version?.repository"
@@ -82,7 +82,10 @@
         >
           <v-text-field
             v-model="selected_image"
+            name="BlueOS Remote Repository"
             label="Remote repository"
+            :append-icon="selected_image != default_repository ? 'mdi-restore' : undefined"
+            @click:append="selected_image = default_repository"
           />
         </v-form>
         <v-alert
@@ -99,9 +102,9 @@
           subtitle="Loading remote images..."
         />
         <version-card
-          v-for="image in paginatedComponents"
+          v-for="(image, index) in paginatedComponents"
           v-else
-          :key="image.sha"
+          :key="`${image.sha}-${index}`"
           :image="image"
           :remote="true"
           :update-available="updateIsAvailable(image)"
@@ -217,6 +220,7 @@ export default Vue.extend({
 
   },
   data() {
+    const default_repository = 'bluerobotics/blueos-core'
     return {
       settings,
       bootstrap_version: undefined as (undefined | string),
@@ -246,7 +250,8 @@ export default Vue.extend({
       loading_images: false,
       updating_bootstrap: false,
       waiting: false,
-      selected_image: 'bluerobotics/blueos-core',
+      default_repository,
+      selected_image: default_repository,
       deleting: '', // image currently being deleted, if any
     }
   },

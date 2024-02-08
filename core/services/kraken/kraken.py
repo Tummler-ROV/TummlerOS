@@ -5,6 +5,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, cast
 
 import aiodocker
 import aiohttp
+import psutil
 from aiodocker.docker import DockerContainer
 from commonwealth.settings.manager import Manager
 from commonwealth.utils.apis import StackedHTTPException
@@ -279,17 +280,38 @@ class Kraken:
         containers: List[DockerContainer] = await self.client.containers.list(filter='{"status": ["running"]}')  # type: ignore
         return containers
 
-    async def load_logs(self, container_name: str) -> List[str]:
+    async def stream_logs(self, container_name: str, timeout: int = 30) -> AsyncGenerator[str, None]:
         containers = await self.client.containers.list(filters={"name": {container_name: True}})  # type: ignore
         if not containers:
             raise RuntimeError(f"Container not found: {container_name}")
-        return cast(List[str], await containers[0].log(stdout=True, stderr=True))
 
+        start_time = asyncio.get_event_loop().time()
+        async for log_line in containers[0].log(stdout=True, stderr=True, follow=True, stream=True):
+            elapsed_time = asyncio.get_event_loop().time() - start_time
+            if elapsed_time > timeout:
+                break
+            yield log_line
+        logger.info(f"Finished streaming logs for {container_name}")
+
+    # pylint: disable=too-many-locals
     async def load_stats(self) -> Dict[str, Any]:
         containers = await self.client.containers.list()  # type: ignore
-        container_stats = [(await container.stats(stream=False))[0] for container in containers]
+
+        # Create separate lists of coroutine objects for stats and show
+        stats_coroutines = [container.stats(stream=False) for container in containers]
+        show_coroutines = [container.show(size=1) for container in containers]
+
+        # Run all stats and show coroutine objects concurrently
+        stats_results = await asyncio.gather(*stats_coroutines)
+        show_results = await asyncio.gather(*show_coroutines)
+
+        # Extract the relevant data from the results
+        container_stats = [result[0] for result in stats_results]
+        container_shows = list(show_results)
+
         result = {}
-        for stats in container_stats:
+        total_disk_size = psutil.disk_usage("/").total
+        for stats, show in zip(container_stats, container_shows):
             # Based over: https://github.com/docker/cli/blob/v20.10.20/cli/command/container/stats_helpers.go
             cpu_percent = 0
 
@@ -310,11 +332,17 @@ class Kraken:
             except KeyError:
                 memory_usage = "N/A"
 
+            try:
+                disk_usage = 100 * show["SizeRootFs"] / total_disk_size
+            except KeyError:
+                disk_usage = "N/A"
+
             name = stats["name"].replace("/", "")
 
             result[name] = {
                 "cpu": cpu_percent,
                 "memory": memory_usage,
+                "disk": disk_usage,
             }
         return result
 

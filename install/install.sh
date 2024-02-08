@@ -105,6 +105,14 @@ NECESSARY_SPACE_MB=1024
     exit 1
 )
 
+# Check iptables
+iptables -v 2>&1 | grep -q "Failed to initialize nft" && (
+    echo "iptables command failed. Be sure to fix it before running again."
+    echo "Note: If you are running ubuntu or debian, maybe the following command will fix the issue:"
+    echo "$ sudo update-alternatives --set iptables /usr/sbin/iptables-legacy"
+    exit 1
+)
+
 # Check for docker and install it if not found
 echo "Checking for docker."
 ## Docker uses VERSION environment variable to set the docker version,
@@ -141,7 +149,7 @@ then
     alias docker=dind
 fi
 
-sudo usermod -aG docker pi
+sudo usermod -aG docker $USER
 
 # Stop and remove all docker if NO_CLEAN is not defined
 test $NO_CLEAN || (
@@ -162,11 +170,16 @@ echo "Going to install blueos-docker version ${VERSION}."
 echo "Downloading and installing udev rules."
 curl -fsSL $ROOT/install/udev/100.autopilot.rules -o /etc/udev/rules.d/100.autopilot.rules
 
-echo "Disabling automatic Link-local configuration in dhcpd.conf."
-# delete line if it already exists
-sed -i '/noipv4ll/d' /etc/dhcpcd.conf
-# add noipv4ll
-sed -i '$ a noipv4ll' /etc/dhcpcd.conf
+if [ -f /etc/dhcpcd.conf ]
+then
+    echo "Disabling automatic Link-local configuration in dhcpd.conf."
+    # delete line if it already exists
+    sed -i '/noipv4ll/d' /etc/dhcpcd.conf
+    # add noipv4ll
+    sed -i '$ a noipv4ll' /etc/dhcpcd.conf
+else
+    echo "Not modifying /etc/dhcpcd.conf - file does not exist"
+fi
 
 # Do necessary changes if running in a Raspiberry
 command -v raspi-config && (
@@ -226,7 +239,7 @@ rm -rf /var/lib/systemd/random-seed /loader/random-seed
 
 echo "Installation finished successfully."
 echo "You can access after the reboot:"
-echo "- The computer webpage: http://blueos.local"
-echo "- The ssh client: pi@blueos.local"
+echo "- The computer webpage: http://blueos-avahi.local"
+echo "- The ssh client: $USER@blueos-avahi.local"
 echo "System will reboot in 10 seconds."
 sleep 10 && reboot

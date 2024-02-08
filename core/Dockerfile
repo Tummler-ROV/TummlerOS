@@ -1,10 +1,10 @@
 # Build frontend
-FROM --platform=$BUILDPLATFORM oven/bun AS frontendBuilder
+FROM --platform=$BUILDPLATFORM oven/bun:1.0.3-slim AS frontendBuilder
 
-ARG VUE_APP_GIT_DESCRIBE
-RUN [ -z "$VUE_APP_GIT_DESCRIBE" ] \
-    && echo "VUE_APP_GIT_DESCRIBE argument not provided." \
-    && echo "Use: --build-arg VUE_APP_GIT_DESCRIBE=\$(git describe --long --always --dirty --all)" \
+ARG VITE_APP_GIT_DESCRIBE
+RUN [ -z "$VITE_APP_GIT_DESCRIBE" ] \
+    && echo "VITE_APP_GIT_DESCRIBE argument not provided." \
+    && echo "Use: --build-arg VITE_APP_GIT_DESCRIBE=\$(git describe --long --always --dirty --all)" \
     && exit 1 || exit 0
 
 COPY frontend /home/pi/frontend
@@ -12,12 +12,21 @@ RUN bun install --cwd /home/pi/frontend
 RUN bun run --cwd /home/pi/frontend build
 
 # Download binaries
-FROM bluerobotics/blueos-base:v0.0.10 as downloadBinaries
+FROM bluerobotics/blueos-base:v0.1.0 as downloadBinaries
 COPY tools /home/pi/tools
 RUN /home/pi/tools/install-static-binaries.sh
 
 # BlueOS-docker base image
-FROM bluerobotics/blueos-base:v0.0.10
+FROM bluerobotics/blueos-base:v0.1.0
+
+# Define arguments for target platform
+# These arguments are defined automatically by buildx when using `--platform`
+ARG TARGETARCH
+ARG TARGETVARIANT
+
+# Set these arguments as environment variables
+ENV TARGETARCH=${TARGETARCH}
+ENV TARGETVARIANT=${TARGETVARIANT}
 
 # Install necessary tools
 COPY tools /home/pi/tools
@@ -35,6 +44,7 @@ COPY configuration/motd /etc/motd
 COPY services /home/pi/services
 RUN /home/pi/services/install-services.sh
 COPY start-blueos-core /usr/bin/start-blueos-core
+COPY run-service.sh /usr/bin/run-service
 
 # Copy binaries and necessary folders from downloadBinaries to this stage
 COPY --from=downloadBinaries \
@@ -65,7 +75,8 @@ RUN [ -z "$GIT_DESCRIBE_TAGS" ] \
 # Update blueosrc with the necessary environment variables
 RUN RCFILE_PATH="/etc/blueosrc" \
     && echo "export GIT_DESCRIBE_TAGS=$GIT_DESCRIBE_TAGS" >> $RCFILE_PATH \
-    && echo "export HISTFILE=/etc/blueos/.bash_history" >> $RCFILE_PATH
+    && echo "export HISTFILE=/etc/blueos/.bash_history" >> $RCFILE_PATH \
+    && echo "export PATH=/usr/blueos/bin:$PATH" >> $RCFILE_PATH
 
 # create some Symlinks to make life easier
 RUN mkdir -p /shortcuts

@@ -35,7 +35,7 @@ from nginx_parser import parse_nginx_file
 SERVICE_NAME = "helper"
 SPEED_TEST: Optional[Speedtest] = None
 
-limit_ram_usage()
+limit_ram_usage(200)
 
 logging.basicConfig(handlers=[InterceptHandler()], level=logging.DEBUG)
 try:
@@ -98,6 +98,8 @@ class ServiceMetadata(BaseModel):
     webpage: str
     route: Optional[str]
     new_page: Optional[bool]
+    extra_query: Optional[str]
+    avoid_iframes: Optional[bool]
     api: str
     sanitized_name: Optional[str]
 
@@ -510,7 +512,7 @@ async def internet_download_speed() -> Any:
 async def internet_upload_speed() -> Any:
     if not SPEED_TEST:
         raise RuntimeError("SPEED_TEST not initialized, initialize server search.")
-    SPEED_TEST.upload()
+    SPEED_TEST.upload(pre_allocate=False)
     return SPEED_TEST.results.dict()
 
 

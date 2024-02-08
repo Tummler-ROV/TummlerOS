@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      python-version: 3.9 # Our base image has Python 3.9
+      python-version: 3.11 # Our base image has Python 3.11
 
     steps:
     - name: Checkout
@@ -65,7 +65,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v1
         with:
-          bun-version: latest
+          bun-version: 1.0.3
 
       - name: Bun install
         run: bun install --cwd ./core/frontend
@@ -112,7 +112,7 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "buildx_args=\
             --build-arg GIT_DESCRIBE_TAGS=$(git describe --tags --long --always) \
-            --build-arg VUE_APP_GIT_DESCRIBE=$(git describe --long --always --dirty --all) \
+            --build-arg VITE_APP_GIT_DESCRIBE=$(git describe --long --always --dirty --all) \
             --cache-from 'type=local,src=/tmp/.buildx-cache' \
             --cache-to 'type=local,dest=/tmp/.buildx-cache' \
             ${TAGS} \
@@ -249,7 +249,8 @@ jobs:
   deploy-raspberry-image:
     needs: deploy-docker-images
     if: github.event_name != 'pull_request'
-    runs-on: self-hosted
+    timeout-minutes: 120 # Detect if it gets into an infinite loop or some unexpected state
+    runs-on: blueos-ci
     # The runner for this job is a Raspberry Pi OS Bullseye.
     # Just install docker (curl -sSL https://get.docker.com/ | sh) and follow the instructions for setting up a new runner in
     # https://github.com/bluerobotics/BlueOS-docker/settings/actions/runners/new
@@ -272,14 +273,14 @@ jobs:
         run: |
           VERSION=$GITHUB_REPOSITORY
           VERSION=${VERSION:-master}
-          wget https://raw.githubusercontent.com/williangalvani/pimod/master/pimod.sh && chmod +x pimod.sh
+          wget https://raw.githubusercontent.com//Nature40/pimod/master/pimod.sh && chmod +x pimod.sh
           docker run --rm --privileged \
             -v $PWD:/files \
             -e PATH=/pimod:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
             -e GITHUB_REPOSITORY=$GITHUB_REPOSITORY \
             -e VERSION=$GITHUB_REF_NAME \
             --workdir=/files \
-            --platform ${{ matrix.platforms }} williangalvani/pimod:latest pimod.sh deploy/pimod/blueos.Pifile
+            --platform ${{ matrix.platforms }} nature40/pimod:latest pimod.sh deploy/pimod/blueos.Pifile
 
       # TODO: add GITHUB_REF_NAME after https://github.com/actions/upload-artifact/issues/231 is fixed
       # name: blueos-${{ env.GITHUB_REF_NAME }}.zip

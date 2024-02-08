@@ -20,7 +20,7 @@ from mavlink_proxy.Endpoint import Endpoint
 
 
 class Manager:
-    def __init__(self) -> None:
+    def __init__(self, preferred_tool: Optional[str] = None) -> None:
         available_interfaces = Manager.available_interfaces()
         if not available_interfaces:
             raise RuntimeError(
@@ -29,7 +29,10 @@ class Manager:
                 f" Supported: {Manager.possible_interfaces()}"
             )
 
-        self.tool = available_interfaces[0]()
+        if preferred_tool:
+            self.tool = AbstractRouter.get_interface(preferred_tool)()
+        else:
+            self.tool = available_interfaces[0]()
         self.should_be_running = False
         self._last_valid_endpoints: Set[Endpoint] = set()
 
@@ -109,18 +112,34 @@ class Manager:
     def master_endpoint(self) -> Optional[Endpoint]:
         return self.tool.master_endpoint
 
-    def start(self, master_endpoint: Endpoint) -> None:
+    async def start(self, master_endpoint: Endpoint) -> None:
+        if not self.tool:
+            logger.info("No tool selected. Falling back to the first one found")
+            self.tool = self.available_interfaces()[0]()
         self.should_be_running = True
-        self.tool.start(master_endpoint)
+        await self.tool.start(master_endpoint)
         self._last_valid_endpoints = self.endpoints()
 
-    def stop(self) -> None:
-        self.should_be_running = False
-        self.tool.exit()
+    async def set_preferred_router(self, router_name: str) -> None:
+        try:
+            endpoints = self.endpoints()
+            master_endpoint = self.master_endpoint
+            await self.tool.exit()
+            self.tool = AbstractRouter.get_interface(router_name)()
+            for endpoint in endpoints:
+                self.tool.add_endpoint(endpoint)
+            if master_endpoint:
+                await self.tool.start(master_endpoint)
+        except Exception as error:
+            logger.error(f"Failed to set preferred router to {router_name}. {error}")
 
-    def restart(self) -> None:
+    async def stop(self) -> None:
         self.should_be_running = False
-        self.tool.restart()
+        await self.tool.exit()
+
+    async def restart(self) -> None:
+        self.should_be_running = False
+        await self.tool.restart()
         self._last_valid_endpoints = self.endpoints()
         self.should_be_running = True
 
@@ -129,8 +148,8 @@ class Manager:
             raise NoMasterMavlinkEndpoint("Mavlink master endpoint was not set. Cannot build command line.")
         return self.tool.assemble_command(self.master_endpoint)
 
-    def is_running(self) -> bool:
-        return self.tool.is_running()
+    async def is_running(self) -> bool:
+        return await self.tool.is_running()
 
     def router_name(self) -> str:
         return self.tool.name()
@@ -143,14 +162,14 @@ class Manager:
         while True:
             await asyncio.sleep(5.0)
 
-            needs_restart = self.should_be_running and not self.is_running()
+            needs_restart = self.should_be_running and not await self.is_running()
 
             if not needs_restart:
                 continue
 
             logger.debug("Mavlink router stopped. Trying to restart it.")
             try:
-                self.restart()
+                await self.restart()
                 logger.debug("Mavlink router successfully restarted.")
             except Exception as error:
                 logger.error(f"Failed to restart Mavlink router. {error}")

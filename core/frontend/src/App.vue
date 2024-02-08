@@ -187,7 +187,7 @@
 
             <v-list-item
               v-else
-              :to="menu.route"
+              :to="menu.new_page ? null : menu.route"
               :target="menu.new_page ? '_blank' : '_self'"
               :href="menu.extension ? menu.route : undefined"
             >
@@ -324,7 +324,7 @@
     <new-version-notificator />
     <Wizard />
     <alerter />
-    <VueTour
+    <VTour
       name="welcomeTour"
       :steps="steps.filter((step) => step?.filter_wifi_connected !== wifi_connected)"
       :callbacks="tourCallbacks"
@@ -336,10 +336,10 @@
 </template>
 
 <script lang="ts">
-import tummler_yellow from '@/assets/img/tummler-logo-yellow.svg'
-import tummler_white from '@/assets/img/tummler-logo-white.svg'
 import Vue from 'vue'
 
+import tummler_yellow from '@/assets/img/tummler-logo-yellow.svg'
+import tummler_white from '@/assets/img/tummler-logo-white.svg'
 import Wizard from '@/components/wizard/Wizard.vue'
 import settings from '@/libs/settings'
 import helper from '@/store/helper'
@@ -460,8 +460,8 @@ export default Vue.extend({
             icon: service.metadata?.icon?.startsWith('/')
               ? `${address}${service.metadata.icon}`
               : service.metadata?.icon ?? 'mdi-puzzle',
-            route: service.metadata?.route ?? address,
-            new_page: service.metadata?.new_page ?? undefined,
+            route: this.addExtraQuery(service.metadata?.route ?? address, service.metadata?.extra_query),
+            new_page: service.metadata?.avoid_iframes ?? service.metadata?.new_page,
             advanced: false,
             text: service.metadata?.description ?? 'Service text',
             extension: true,
@@ -604,13 +604,13 @@ export default Vue.extend({
       ]
     },
     git_info(): string {
-      return process.env.VITE_GIT_DESCRIBE
+      return import.meta.env.VITE_APP_GIT_DESCRIBE
     },
     git_info_url(): string {
-      return convertGitDescribeToUrl(process.env.VITE_GIT_DESCRIBE)
+      return convertGitDescribeToUrl(import.meta.env.VITE_APP_GIT_DESCRIBE)
     },
     build_date(): string {
-      return process.env.VITE_BUILD_DATE
+      return import.meta.env.VITE_BUILD_DATE
     },
     blueos_logo(): string {
       return settings.is_dark_theme ? tummler_white : tummler_yellow
@@ -651,6 +651,14 @@ export default Vue.extend({
     this.bootstrap_version = await VCU.loadBootstrapCurrentVersion()
   },
   methods: {
+    addExtraQuery(url: string, extra_queries?: string) {
+      if (!extra_queries) {
+        return url
+      }
+      // adds additional query parameters to a url
+      const separator = url.includes('?') ? '&' : '?'
+      return url + separator + extra_queries
+    },
     getWidget(name: string) {
       return this.widgets.filter((widget) => widget.name === name)?.[0]?.component
     },
@@ -665,6 +673,10 @@ export default Vue.extend({
       }
     },
     createExtensionAddress(service: Service): string {
+      if (service.metadata?.avoid_iframes) {
+        const base_url = window.location.origin.split(':').slice(0, 2).join(':')
+        return `${base_url}:${service.port}`
+      }
       let address = `/extension/${service?.metadata?.sanitized_name}`
       if (service?.metadata?.new_page) {
         address += '?full_page=true'
