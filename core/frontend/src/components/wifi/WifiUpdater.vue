@@ -6,22 +6,31 @@
 import Vue from 'vue'
 
 import Notifier from '@/libs/notifier'
+import { OneMoreTime } from '@/one-more-time'
 import wifi from '@/store/wifi'
 import { wifi_service } from '@/types/frontend_services'
 import { SavedNetwork, WPANetwork } from '@/types/wifi'
-import back_axios, { backend_offline_error } from '@/utils/api'
-import { callPeriodically } from '@/utils/helper_functions'
+import back_axios, { isBackendOffline } from '@/utils/api'
 
 const notifier = new Notifier(wifi_service)
 
 export default Vue.extend({
   name: 'WifiUpdater',
+  data() {
+    return {
+      fetch_saved_networks_task: new OneMoreTime({ delay: 5000, disposeWith: this }),
+      fetch_network_status_task: new OneMoreTime({ delay: 5000, disposeWith: this }),
+      fetch_hotspot_status_task: new OneMoreTime({ delay: 10000, disposeWith: this }),
+      fetch_available_networks_task: new OneMoreTime({ delay: 20000, disposeWith: this }),
+      fetch_hotspot_credentials_task: new OneMoreTime({ delay: 10000, disposeWith: this }),
+    }
+  },
   mounted() {
-    callPeriodically(this.fetchSavedNetworks, 5000)
-    callPeriodically(this.fetchNetworkStatus, 5000)
-    callPeriodically(this.fetchHotspotStatus, 10000)
-    callPeriodically(this.fetchAvailableNetworks, 20000)
-    callPeriodically(this.fetchHotspotCredentials, 10000)
+    this.fetch_saved_networks_task.setAction(this.fetchSavedNetworks)
+    this.fetch_network_status_task.setAction(this.fetchNetworkStatus)
+    this.fetch_hotspot_status_task.setAction(this.fetchHotspotStatus)
+    this.fetch_available_networks_task.setAction(this.fetchAvailableNetworks)
+    this.fetch_hotspot_credentials_task.setAction(this.fetchHotspotCredentials)
   },
   methods: {
     async fetchNetworkStatus(): Promise<void> {
@@ -52,7 +61,7 @@ export default Vue.extend({
         })
         .catch((error) => {
           wifi.setCurrentNetwork(null)
-          if (error === backend_offline_error) { return }
+          if (isBackendOffline(error)) { return }
           const message = `Could not fetch wifi status: ${error.message}`
           notifier.pushError('WIFI_STATUS_FETCH_FAIL', message)
         })
@@ -60,7 +69,7 @@ export default Vue.extend({
     async fetchHotspotStatus(): Promise<void> {
       await back_axios({
         method: 'get',
-        url: `${wifi.API_URL}/hotspot`,
+        url: `${wifi.API_URL}/hotspot_extended_status`,
         timeout: 10000,
       })
         .then((response) => {
@@ -69,6 +78,18 @@ export default Vue.extend({
         .catch((error) => {
           wifi.setHotspotStatus(null)
           notifier.pushBackError('HOTSPOT_STATUS_FETCH_FAIL', error)
+        })
+      await back_axios({
+        method: 'get',
+        url: `${wifi.API_URL}/smart_hotspot`,
+        timeout: 10000,
+      })
+        .then((response) => {
+          wifi.setSmartHotspotStatus(response.data)
+        })
+        .catch((error) => {
+          wifi.setHotspotStatus(null)
+          notifier.pushBackError('SMART_HOTSPOT_STATUS_FETCH_FAIL', error)
         })
     },
     async fetchHotspotCredentials(): Promise<void> {
@@ -105,7 +126,7 @@ export default Vue.extend({
         })
         .catch((error) => {
           wifi.setAvailableNetworks(null)
-          if (error === backend_offline_error) { return }
+          if (isBackendOffline(error)) { return }
           const message = `Could not scan for wifi networks: ${error.message}`
           notifier.pushError('WIFI_SCAN_FAIL', message)
         })
@@ -121,7 +142,7 @@ export default Vue.extend({
         })
         .catch((error) => {
           wifi.setSavedNetworks(null)
-          if (error === backend_offline_error) { return }
+          if (isBackendOffline(error)) { return }
           const message = `Could not fetch saved networks: ${error.message}.`
           notifier.pushError('WIFI_SAVED_FETCH_FAIL', message)
         })

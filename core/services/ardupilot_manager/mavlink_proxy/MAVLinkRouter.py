@@ -3,8 +3,7 @@ import subprocess
 from typing import Optional
 
 from mavlink_proxy.AbstractRouter import AbstractRouter
-from mavlink_proxy.Endpoint import Endpoint
-from typedefs import EndpointType
+from mavlink_proxy.Endpoint import Endpoint, EndpointType
 
 
 class MAVLinkRouter(AbstractRouter):
@@ -64,7 +63,7 @@ class MAVLinkRouter(AbstractRouter):
                 f"Master endpoint of type {master_endpoint.connection_type} not supported on MavlinkRouter."
             )
 
-        return f"{self.binary()} {convert_endpoint(master_endpoint)} {endpoints} -l {self.logdir()}"
+        return f"{self.binary()} {convert_endpoint(master_endpoint)} {endpoints} -l {self.logdir()} -T {self.logdir()}"
 
     @staticmethod
     def name() -> str:

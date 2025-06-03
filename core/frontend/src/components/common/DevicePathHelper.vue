@@ -38,17 +38,19 @@ import Vue from 'vue'
 import navigator_image from '@/assets/img/devicePathHelper/navigator.svg'
 import raspberry_pi3_image from '@/assets/img/devicePathHelper/rpi3b.svg'
 import raspberry_pi4_image from '@/assets/img/devicePathHelper/rpi4b.svg'
+import raspberry_pi5_image from '@/assets/img/devicePathHelper/rpi5.svg'
 import system_information from '@/store/system-information'
 import { Dictionary } from '@/types/common'
 
 enum BoardType {
   Rpi4B = 'Rpi4B',
   Rpi3B = 'Rpi3B',
+  Rpi5 = 'Rpi5',
   Navigator = 'Navigator',
   Unknown = 'Unknown'
 }
 
-const connector_map: Dictionary<string> = {
+const standard_connector_map: Dictionary<string> = {
   '/dev/ttyS0': 'serial1',
   '/dev/ttyAMA1': 'serial3',
   '/dev/ttyAMA2': 'serial4',
@@ -63,6 +65,12 @@ const connector_map: Dictionary<string> = {
   '/dev/serial/by-path/platform-3f980000.usb-usb-0:1.4:1.0-port0': 'top-right',
   '/dev/serial/by-path/platform-3f980000.usb-usb-0:1.3:1.0-port0': 'bottom-left',
   '/dev/serial/by-path/platform-3f980000.usb-usb-0:1.2:1.0-port0': 'top-left',
+  // Pi5
+  '/dev/serial/by-path/platform-xhci-hcd.1-usb-0:1:1.0-port0': 'top-left',
+  '/dev/serial/by-path/platform-xhci-hcd.0-usb-0:1:1.0-port0': 'bottom-left',
+  '/dev/serial/by-path/platform-xhci-hcd.0-usb-0:2:1.0-port0': 'top-right',
+  '/dev/serial/by-path/platform-xhci-hcd.1-usb-0:2:1.0-port0': 'bottom-right',
+
 }
 
 export default Vue.extend({
@@ -88,12 +96,52 @@ export default Vue.extend({
     svgName: `device-path-helper-img-${uuid()}`,
   }),
   computed: {
+    is_kernel_6() : boolean {
+      return system_information.system?.info?.kernel_version?.startsWith('6.') ?? false
+    },
+    updated_connector_map() : Dictionary<string> {
+      if (this.is_kernel_6) {
+        switch (this.get_host_board_type) {
+          case BoardType.Rpi5:
+            return {
+              ...standard_connector_map,
+              '/dev/ttyAMA0': 'serial1',
+              '/dev/ttyAMA2': 'serial3',
+              '/dev/ttyAMA3': 'serial4',
+              '/dev/ttyAMA4': 'serial5',
+            }
+          case BoardType.Rpi4B:
+            return {
+              ...standard_connector_map,
+              '/dev/ttyS0': 'serial1',
+              '/dev/ttyAMA3': 'serial3',
+              '/dev/ttyAMA4': 'serial4',
+              '/dev/ttyAMA5': 'serial5',
+            }
+          default:
+            return standard_connector_map
+        }
+      }
+      return standard_connector_map
+    },
     inline_name(): string {
       return `${this.svgName}-inline`
     },
     serial_port_path(): string {
       /* returns the by-path path for the serial port if available */
       return system_information.serial?.ports?.find((a) => a.name === this.device)?.by_path ?? this.device as string
+    },
+    get_host_board_type() : BoardType {
+      switch (true) {
+        case system_information.platform?.raspberry?.model?.includes('Raspberry Pi 4'):
+          return BoardType.Rpi4B
+        case system_information.platform?.raspberry?.model?.includes('Raspberry Pi 5'):
+          return BoardType.Rpi5
+        case system_information.platform?.raspberry?.model?.includes('Raspberry Pi 3'):
+          return BoardType.Rpi3B
+        default:
+          return BoardType.Unknown
+      }
     },
     board_type() : BoardType {
       /* Detects board type between navigator and Rpi4 */
@@ -105,6 +153,8 @@ export default Vue.extend({
           return BoardType.Rpi3B
         case this.serial_port_path.includes('platform-fd500000'):
           return BoardType.Rpi4B
+        case this.get_host_board_type === BoardType.Rpi5 && this.serial_port_path.includes('platform-xhci-hcd'):
+          return BoardType.Rpi5
         default:
           return BoardType.Unknown
       }
@@ -117,12 +167,14 @@ export default Vue.extend({
           return raspberry_pi4_image
         case BoardType.Rpi3B:
           return raspberry_pi3_image
+        case BoardType.Rpi5:
+          return raspberry_pi5_image
         default:
           return ''
       }
     },
     board_connector() : string | undefined {
-      const connector = connector_map[this.serial_port_path]
+      const connector = this.updated_connector_map[this.serial_port_path]
       this.setSvgConnector(connector)
       return connector
     },

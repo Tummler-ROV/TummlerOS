@@ -25,6 +25,7 @@ class Bootstrapper:
     core_last_response_time = time.monotonic()
 
     def __init__(self, client: docker.DockerClient, low_level_api: docker.APIClient = None) -> None:
+        self.version_chooser_is_online = False
         self.client: docker.DockerClient = client
         self.core_last_response_time = time.monotonic()
         if low_level_api is None:
@@ -89,8 +90,8 @@ class Bootstrapper:
                 for container in self.client.containers.list()
                 if container.name == self.BOOTSTRAP_CONTAINER_NAME
             )
-        except Exception:
-            return f"Bootstrap does not follow standard name: {self.BOOTSTRAP_CONTAINER_NAME}"
+        except Exception as exception:
+            return f"Bootstrap does not follow standard name: {self.BOOTSTRAP_CONTAINER_NAME}, {exception}"
 
     def pull(self, component_name: str) -> None:
         """Pulls an image
@@ -111,12 +112,16 @@ class Bootstrapper:
             curses.noecho()
             curses.cbreak()
             curses.curs_set(0)
-        except Exception:
+        except Exception as exception:
+            logger.warning(f"Failed to initialize curses: {exception}")
             curses_ui = False
 
         # if there is no curses support, like in the testing environment, just dump everything
         if not curses_ui:
-            self.client.images.pull(f"{image_name}:{tag}")
+            try:
+                self.client.images.pull(f"{image_name}:{tag}")
+            except Exception as exception:
+                logger.warning(f"Failed to pull image ({image_name}:{tag}): {exception}")
             return
 
         # if there is ncurses support, proceed with it
@@ -153,8 +158,12 @@ class Bootstrapper:
 
     def image_is_available_locally(self, image_name: str, tag: str) -> bool:
         """Checks if the image is already available locally"""
-        images = self.client.images.list(image_name)
-        return any(f"{image_name}:{tag}" in image.tags for image in images)
+        try:
+            images = self.client.images.list(image_name)
+            return any(f"{image_name}:{tag}" in image.tags for image in images)
+        except Exception as exception:
+            logger.warning(f"Failed to list image ({image_name}): {exception}")
+        return False
 
     def start(self, component_name: str) -> bool:
         """Loads settings and starts the containers. Loads default settings if no settings are found
@@ -176,6 +185,7 @@ class Bootstrapper:
         binds = image["binds"]
         privileged = image["privileged"]
         network = image["network"]
+        environment = image.get("environment", [])
 
         if not self.image_is_available_locally(image_name, image_version):
             try:
@@ -199,6 +209,14 @@ class Bootstrapper:
                 privileged=privileged,
                 network=network,
                 detach=True,
+                environment=environment,
+                log_config={
+                    "Type": "json-file",
+                    "Config": {
+                        "max-size": "30m",
+                        "max-file": "3",
+                    },
+                },
             )
         except docker.errors.APIError as error:
             warn(f"Error trying to start image: {error}, reverting to default...")
@@ -206,6 +224,8 @@ class Bootstrapper:
             return False
 
         logger.info(f"{component_name} ({docker_name}) started")
+        # Restart counter with new core
+        self.core_last_response_time = time.monotonic()
         return True
 
     def is_running(self, component: str) -> bool:
@@ -217,7 +237,11 @@ class Bootstrapper:
         Returns:
             bool: True if the chosen container is running
         """
-        return any(container.name.endswith(component) for container in self.client.containers.list())
+        try:
+            return any(container.name.endswith(component) for container in self.client.containers.list())
+        except Exception as exception:
+            logger.warning(f"Could not list containers: {exception}")
+        return False
 
     def is_version_chooser_online(self) -> bool:
         """Check if the version chooser service is online.
@@ -228,11 +252,15 @@ class Bootstrapper:
         try:
             response = requests.get("http://localhost/version-chooser/v1.0/version/current", timeout=10)
             if Bootstrapper.SETTINGS_NAME_CORE in response.json()["repository"]:
+                if not self.version_chooser_is_online:
+                    self.version_chooser_is_online = True
+                    logger.info("Version chooser is online")
                 return True
         except Exception as e:
             logger.warning(
                 f"Could not talk to version chooser for {time.monotonic() - self.core_last_response_time}: {e}"
             )
+        self.version_chooser_is_online = False
         return False
 
     def remove(self, container: str) -> None:

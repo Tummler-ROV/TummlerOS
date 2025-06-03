@@ -37,6 +37,8 @@ export default interface Parameter {
     paramType: { type: ParamType }
 
     units?: string
+
+    default?: number
 }
 
 export function printParam(param?: Parameter): string {
@@ -97,4 +99,11 @@ export function printParam(param?: Parameter): string {
   } catch {
     return 'N/A'
   }
+}
+
+export function printParamWithUnit(parameter?: Parameter): string {
+  const paramValueText = printParam(parameter)
+  const paramUnitsText = parameter?.units ? ` [${parameter.units}]` : ''
+
+  return paramValueText + paramUnitsText
 }

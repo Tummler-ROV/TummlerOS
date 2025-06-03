@@ -4,6 +4,14 @@
       max-width="1000"
       class="mx-auto"
     >
+      <v-dialog
+        v-model="show_docker_login_dialog"
+        max-width="450"
+      >
+        <DockerLogin
+          @cancel="show_docker_login_dialog = false"
+        />
+      </v-dialog>
       <v-card
         v-if="!settings.is_pirate_mode"
         max-width="900"
@@ -59,7 +67,8 @@
           :current="image.tag === current_version?.tag && image.repository === current_version?.repository"
           :bootstrap-version="bootstrap_version"
           :update-available="updateIsAvailable(image)"
-          :deleting="deleting.endsWith(image.tag)"
+          :deleting="isBeingDeleted(image)"
+          :enable-delete="local_versions.result.local.length > 2"
           @delete="deleteVersion"
           @apply="setVersion"
           @pull-and-apply="pullAndSetVersion"
@@ -76,7 +85,15 @@
         max-width="900"
         class="mx-auto my-12 pa-4"
       >
-        <h2>Remote Versions</h2>
+        <div class="d-flex justify-space-between pb-3">
+          <h2>Remote Versions</h2>
+          <v-btn
+            color="primary"
+            @click="show_docker_login_dialog = true"
+          >
+            Docker Login
+          </v-btn>
+        </div>
         <v-form
           @submit.prevent="loadVersions()"
         >
@@ -138,7 +155,7 @@
       <h2>Manual upload</h2>
       Use this to upload a .tar docker image. These can be downloaded from
       <a
-        href="https://github.com/bluerobotics/BlueOS-docker/actions/workflows/test-and-deploy.yml"
+        href="https://github.com/bluerobotics/BlueOS/actions/workflows/test-and-deploy.yml"
         target="_blank"
       >Github's CI</a>
       or generated locally using "docker save"
@@ -147,6 +164,8 @@
         id="file"
         show-size
         accept=".tar"
+        :rules="[isFileInputNotEmpty]"
+        :error-messages="file_input_error"
         label="File input"
       />
       <v-progress-linear
@@ -157,8 +176,8 @@
       <v-btn
         v-if="!disable_upload_controls"
         color="primary"
-        class="mr-2 mb-4"
-        @click="upload()"
+        class="mr-2 mb-4 mt-1"
+        @click="validateInputFileForm() && upload()"
         v-text="'Upload'"
       />
 
@@ -196,7 +215,9 @@ import Vue from 'vue'
 import PullProgress from '@/components/utils/PullProgress.vue'
 import Notifier from '@/libs/notifier'
 import settings from '@/libs/settings'
+import helper from '@/store/helper'
 import { version_chooser_service } from '@/types/frontend_services'
+import { InternetConnectionState } from '@/types/helper'
 import {
   isServerResponse,
   LocalVersionsQuery, Version, VersionsQuery, VersionType,
@@ -207,6 +228,7 @@ import PullTracker from '@/utils/pull_tracker'
 import * as VCU from '@/utils/version_chooser'
 
 import SpinningLogo from '../common/SpinningLogo.vue'
+import DockerLogin from './DockerLogin.vue'
 import VersionCard from './VersionCard.vue'
 
 const notifier = new Notifier(version_chooser_service)
@@ -214,10 +236,10 @@ const notifier = new Notifier(version_chooser_service)
 export default Vue.extend({
   name: 'VersionChooser',
   components: {
+    DockerLogin,
     SpinningLogo,
     VersionCard,
     PullProgress,
-
   },
   data() {
     const default_repository = 'bluerobotics/blueos-core'
@@ -253,6 +275,8 @@ export default Vue.extend({
       default_repository,
       selected_image: default_repository,
       deleting: '', // image currently being deleted, if any
+      file_input_error: '',
+      show_docker_login_dialog: false,
     }
   },
   computed: {
@@ -261,6 +285,21 @@ export default Vue.extend({
     },
     totalPages(): number {
       return Math.ceil(this.available_versions.remote.length / 10)
+    },
+    inputFileRequiredMessage(): string {
+      return 'File is required'
+    },
+    has_internet(): boolean {
+      return helper.has_internet !== InternetConnectionState.OFFLINE
+    },
+  },
+  watch: {
+    has_internet(value: boolean) {
+      if (value) {
+        this.loadAvailableVersions()
+      } else {
+        this.resetToNoInternetAvailable()
+      }
     },
   },
   mounted() {
@@ -384,6 +423,11 @@ export default Vue.extend({
         })
     },
     async loadAvailableVersions() {
+      if (!this.has_internet) {
+        this.resetToNoInternetAvailable()
+        return
+      }
+
       this.loading_images = true
       this.available_versions.error = null
 
@@ -430,14 +474,14 @@ export default Vue.extend({
       return remote_counterpart.sha !== image.sha && remote_counterpart.sha !== null
     },
     async upload() {
-      this.disable_upload_controls = true
-      const { files } = document.getElementById('file') as HTMLInputElement
-      if (files !== null) {
+      const file = this.getInputFile()
+      if (file) {
+        this.disable_upload_controls = true
         await back_axios({
           method: 'POST',
           url: '/version-chooser/v1.0/version/load/',
           timeout: 15 * 60 * 1000, // Wait for 15min
-          data: files[0],
+          data: file,
           headers: { 'Content-Type': 'undefined' },
           onUploadProgress: (event) => {
             this.upload_percentage = Math.round(100 * (event.loaded / event.total))
@@ -495,7 +539,7 @@ export default Vue.extend({
             tag,
           },
           onDownloadProgress: (progressEvent) => {
-            tracker.digestNewData(progressEvent)
+            tracker.digestNewData(progressEvent, false)
             this.pull_output = tracker.pull_output
             this.download_percentage = tracker.download_percentage
             this.extraction_percentage = tracker.extraction_percentage
@@ -595,6 +639,36 @@ export default Vue.extend({
         return false
       }
       return this.available_versions.local.some((image) => image.sha === sha)
+    },
+    getInputFile(): File | undefined {
+      const { files } = document.getElementById('file') as HTMLInputElement
+
+      return files?.[0]
+    },
+    isFileInputNotEmpty(v: File | null): true | string {
+      this.file_input_error = ''
+      return !!v || this.inputFileRequiredMessage
+    },
+    validateInputFileForm(): boolean {
+      const valid = this.getInputFile() != null
+
+      if (!valid) {
+        this.file_input_error = this.inputFileRequiredMessage
+      }
+
+      return valid
+    },
+    resetToNoInternetAvailable() {
+      this.available_versions = {
+        ...this.available_versions,
+        remote: [],
+        error: "No internet connection available, can't fetch remote images",
+      }
+      this.latest_stable = undefined
+      this.latest_beta = undefined
+    },
+    isBeingDeleted(image: Version) {
+      return this.deleting === `${image.repository}:${image.tag}`
     },
   },
 })

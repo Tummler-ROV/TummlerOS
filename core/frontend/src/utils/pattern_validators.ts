@@ -29,7 +29,7 @@ export function isIpAddress(ip: string): boolean {
 
 export function isUdpAddress(address: string): boolean {
   try {
-    return new URL(address).protocol === 'udp:'
+    return ['udp:', 'udp265:'].includes(new URL(address).protocol)
   } catch (error) {
     return false
   }
@@ -42,6 +42,19 @@ export function isRtspAddress(address: string): boolean {
     return false
   }
 }
+
+export function isRtspVariantAddress(address: string): boolean {
+  const allowedVariants = ['rtspu:', 'rtspt:', 'rtsph:']
+
+  try {
+    const { protocol } = new URL(address)
+
+    return allowedVariants.includes(protocol)
+  } catch (error) {
+    return false
+  }
+}
+
 
 export function isFilepath(filepath: string): boolean {
   const filepath_pattern = /^(.+)\/([^/]+)$/

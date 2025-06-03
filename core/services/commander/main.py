@@ -1,4 +1,5 @@
 #! /usr/bin/env python3
+import json
 import logging
 import os
 import shutil
@@ -6,23 +7,23 @@ import subprocess
 import time
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncGenerator
 
 import appdirs
 import uvicorn
 from commonwealth.utils.apis import GenericErrorHandlingRoute
 from commonwealth.utils.commands import run_command
-from commonwealth.utils.general import delete_everything, limit_ram_usage
+from commonwealth.utils.general import delete_everything, delete_everything_stream
 from commonwealth.utils.logs import InterceptHandler, init_logger
+from commonwealth.utils.streaming import streamer
 from fastapi import FastAPI, HTTPException, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi_versioning import VersionedFastAPI, version
 from loguru import logger
 
 SERVICE_NAME = "commander"
 LOG_FOLDER_PATH = os.environ.get("BLUEOS_LOG_FOLDER_PATH", "/var/logs/blueos")
-
-limit_ram_usage()
+MAVLINK_LOG_FOLDER_PATH = os.environ.get("BLUEOS_MAVLINK_LOG_FOLDER_PATH", "/shortcuts/ardupilot_logs/logs/")
 
 logging.basicConfig(handlers=[InterceptHandler()], level=0)
 init_logger(SERVICE_NAME)
@@ -178,10 +179,51 @@ async def remove_log_services(i_know_what_i_am_doing: bool = False) -> Any:
     delete_everything(Path(LOG_FOLDER_PATH))
 
 
+@app.post("/services/remove_log_stream", status_code=status.HTTP_200_OK)
+@version(1, 0)
+async def remove_log_services_stream(i_know_what_i_am_doing: bool = False) -> StreamingResponse:
+    """Stream the deletion of log files, providing real-time updates about each file being deleted."""
+    check_what_i_am_doing(i_know_what_i_am_doing)
+
+    async def generate() -> AsyncGenerator[str, None]:
+        try:
+            async for info in delete_everything_stream(Path(LOG_FOLDER_PATH)):
+                yield json.dumps(info)
+        except Exception as error:
+            logger.error(f"Error during log deletion stream: {error}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
+
+    return StreamingResponse(
+        streamer(generate(), heartbeats=1.0),
+        media_type="application/x-ndjson",
+        headers={
+            "Content-Type": "application/x-ndjson",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable buffering for nginx
+        },
+    )
+
+
+@app.post("/services/remove_mavlink_log", status_code=status.HTTP_200_OK)
+@version(1, 0)
+async def remove_mavlink_log_services(i_know_what_i_am_doing: bool = False) -> Any:
+    check_what_i_am_doing(i_know_what_i_am_doing)
+    delete_everything(Path(MAVLINK_LOG_FOLDER_PATH))
+
+
 @app.get("/services/check_log_folder_size", status_code=status.HTTP_200_OK)
 @version(1, 0)
 async def check_log_folder_size() -> Any:
     log_path = Path(LOG_FOLDER_PATH)
+    # Return the total size in bytes
+    return sum(file.stat().st_size for file in log_path.glob("**/*") if file.is_file())
+
+
+@app.get("/services/check_mavlink_log_folder_size", status_code=status.HTTP_200_OK)
+@version(1, 0)
+async def check_mavlink_log_folder_size() -> Any:
+    log_path = Path(MAVLINK_LOG_FOLDER_PATH)
     # Return the total size in bytes
     return sum(file.stat().st_size for file in log_path.glob("**/*") if file.is_file())
 
@@ -212,7 +254,10 @@ def setup_ssh() -> None:
     key_path = Path("/root/.config/.ssh")
     private_key = key_path / "id_rsa"
     public_key = private_key.with_suffix(".pub")
-    authorized_keys = Path("/home/pi/.ssh/authorized_keys")
+    user = os.environ.get("SSH_USER", "pi")
+    gid = int(os.environ.get("USER_GID", 1000))
+    uid = int(os.environ.get("USER_UID", 1000))
+    authorized_keys = Path(f"/home/{user}/.ssh/authorized_keys")
 
     try:
         key_path.mkdir(parents=True, exist_ok=True)
@@ -233,7 +278,7 @@ def setup_ssh() -> None:
             authorized_keys_text += public_key_text
             authorized_keys.write_text(authorized_keys_text, "utf-8")
 
-        shutil.chown(authorized_keys, "pi", "pi")
+        os.chown(authorized_keys, uid, gid)
         authorized_keys.chmod(0o600)
     except Exception as error:
         logger.error(f"Error setting up ssh: {error}")

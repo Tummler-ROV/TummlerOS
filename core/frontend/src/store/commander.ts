@@ -1,7 +1,7 @@
 import Notifier from '@/libs/notifier'
 import { ReturnStruct, ShutdownType } from '@/types/commander'
 import { commander_service } from '@/types/frontend_services'
-import back_axios, { backend_offline_error } from '@/utils/api'
+import back_axios, { isBackendOffline } from '@/utils/api'
 
 const notifier = new Notifier(commander_service)
 
@@ -9,6 +9,8 @@ class CommanderStore {
   API_URL = '/commander/v1.0'
 
   private static instance: CommanderStore
+  // environment variables need a full reboot to take effect, so we should be able to cache them
+  private environmentVariables: Record<string, unknown> | undefined
 
   public static getInstance(): CommanderStore {
     if (!CommanderStore.instance) {
@@ -29,7 +31,7 @@ class CommanderStore {
     })
       .then((response) => response.data)
       .catch((error) => {
-        if (error === backend_offline_error) {
+        if (isBackendOffline(error)) {
           return undefined
         }
         const message = `Could not send command to host: ${error.response?.data ?? error.message}.`
@@ -50,7 +52,7 @@ class CommanderStore {
     })
       .then((response) => response.data)
       .catch((error) => {
-        if (error === backend_offline_error) {
+        if (isBackendOffline(error)) {
           return
         }
         const message = `Could not set time: ${error.response?.data ?? error.message}.`
@@ -70,7 +72,7 @@ class CommanderStore {
     })
       .then((response) => response.data)
       .catch((error) => {
-        if (error === backend_offline_error) {
+        if (isBackendOffline(error)) {
           return
         }
 
@@ -92,7 +94,7 @@ class CommanderStore {
     })
       .then((response) => response.data?.enabled)
       .catch((error) => {
-        if (error === backend_offline_error) {
+        if (isBackendOffline(error)) {
           return undefined
         }
         const message = 'Could not get Raspberry legacy camera configuration:'
@@ -114,7 +116,7 @@ class CommanderStore {
     })
       .then(() => true)
       .catch((error) => {
-        if (error === backend_offline_error) {
+        if (isBackendOffline(error)) {
           return false
         }
         const message = 'Could not set Raspberry legacy camera configuration:'
@@ -135,7 +137,7 @@ class CommanderStore {
     })
       .then((response) => response.data)
       .catch((error) => {
-        if (error === backend_offline_error) {
+        if (isBackendOffline(error)) {
           return undefined
         }
         const message = `Could not get vcgencmd data: ${error.response?.data ?? error.message}.`
@@ -145,14 +147,20 @@ class CommanderStore {
   }
 
   async getEnvironmentVariables(): Promise<Record<string, unknown> | undefined> {
+    if (this.environmentVariables) {
+      return this.environmentVariables
+    }
     return back_axios({
       method: 'get',
       url: `${this.API_URL}/environment_variables`,
       timeout: 5000,
     })
-      .then((response) => response.data)
+      .then((response) => {
+        this.environmentVariables = response.data
+        return response.data
+      })
       .catch((error) => {
-        if (error === backend_offline_error) {
+        if (isBackendOffline(error)) {
           return undefined
         }
         const message = `Could not get environment variables: ${error.response?.data ?? error.message}.`
@@ -172,7 +180,7 @@ class CommanderStore {
     })
       .then((response) => response.data)
       .catch((error) => {
-        if (error === backend_offline_error) {
+        if (isBackendOffline(error)) {
           return undefined
         }
         const message = `Could not get Raspi EEPROM information: ${error.response?.data ?? error.message}.`
@@ -192,7 +200,7 @@ class CommanderStore {
     })
       .then((response) => response.data)
       .catch((error) => {
-        if (error === backend_offline_error) {
+        if (isBackendOffline(error)) {
           return undefined
         }
         const message = `Could not update Raspi EEPROM: ${error.response?.data ?? error.message}.`

@@ -4,16 +4,22 @@ import {
 } from 'vuex-module-decorators'
 
 import Notifier from '@/libs/notifier'
+import { OneMoreTime } from '@/one-more-time'
 import store from '@/store'
 import { helper_service } from '@/types/frontend_services'
-import { Service, SpeedTestResult } from '@/types/helper'
-import back_axios, { backend_offline_error } from '@/utils/api'
-import { callPeriodically } from '@/utils/helper_functions'
+import { InternetConnectionState, Service, SpeedTestResult } from '@/types/helper'
+import back_axios, { isBackendOffline } from '@/utils/api'
 
 const notifier = new Notifier(helper_service)
 
+type site = {
+  hostname: string;
+  path: string;
+  port: number;
+}
+
 type CheckSiteStatus = {
-  site: string;
+  site: site;
   online: boolean;
   error: string | null;
 };
@@ -29,13 +35,28 @@ type SiteStatus = Record<string, CheckSiteStatus>
 class PingStore extends VuexModule {
   API_URL = '/helper/latest'
 
-  has_internet = false
+  has_internet: InternetConnectionState = InternetConnectionState.UNKNOWN
 
   services: Service[] = []
 
+  reachable_hosts: string[] = []
+
+  checkInternetAccessTask = new OneMoreTime(
+    { delay: 20000 },
+  )
+
+  updateWebServicesTask = new OneMoreTime(
+    { delay: 5000 },
+  )
+
   @Mutation
-  setHasInternet(has_internet: boolean): void {
+  setHasInternet(has_internet: InternetConnectionState): void {
     this.has_internet = has_internet
+  }
+
+  @Mutation
+  setReachableHosts(hosts: string[]): void {
+    this.reachable_hosts = hosts
   }
 
   @Mutation
@@ -51,13 +72,29 @@ class PingStore extends VuexModule {
       timeout: 10000,
     })
       .then((response) => {
-        const has_internet = !Object.values(response.data as SiteStatus)
-          .filter((item) => item.online)
-          .isEmpty()
+        const sites = Object.values(response.data as SiteStatus)
+        const online_sites = sites.filter((item) => item.online)
+        this.setReachableHosts(online_sites.map((item) => item.site.hostname))
 
-        this.setHasInternet(has_internet)
+        // If no sites are reachable, we're offline
+        if (online_sites.length === 0) {
+          this.setHasInternet(InternetConnectionState.OFFLINE)
+          return
+        }
+
+        // If all sites are reachable, we're fully online
+        if (online_sites.length === sites.length) {
+          this.setHasInternet(InternetConnectionState.ONLINE)
+          return
+        }
+
+        // If some sites are reachable but not all, we have limited connectivity
+        this.setHasInternet(InternetConnectionState.LIMITED)
       })
       .catch((error) => {
+        // If we can't even reach the backend, we're in an unknown state
+        this.setHasInternet(InternetConnectionState.UNKNOWN)
+        this.setReachableHosts([])
         notifier.pushBackError('INTERNET_CHECK_FAIL', error)
       })
   }
@@ -123,7 +160,7 @@ class PingStore extends VuexModule {
     })
       .then((response) => response.data as Service[])
       .catch((error) => {
-        if (error === backend_offline_error) { throw new Error(error) }
+        if (isBackendOffline(error)) { throw new Error(error) }
         const message = `Error scanning for services: ${error}`
         notifier.pushError('SERVICE_SCAN_FAIL', message)
         throw new Error(error)
@@ -142,11 +179,25 @@ class PingStore extends VuexModule {
         this.updateFoundServices([])
       })
   }
+
+  @Action
+  async ping(options: {host: string, iface?: string}): Promise<boolean | undefined> {
+    return back_axios({
+      method: 'get',
+      url: `${this.API_URL}/ping`,
+      params: { host: options.host, interface_addr: options.iface },
+      timeout: 15000,
+    })
+      .then((response) => response.data as boolean)
+      .catch(() => undefined)
+  }
 }
 
 export { PingStore }
 
 const ping: PingStore = getModule(PingStore)
-callPeriodically(ping.checkInternetAccess, 20000)
-callPeriodically(ping.updateWebServices, 5000)
+
+ping.checkInternetAccessTask.setAction(ping.checkInternetAccess)
+ping.updateWebServicesTask.setAction(ping.updateWebServices)
+
 export default ping

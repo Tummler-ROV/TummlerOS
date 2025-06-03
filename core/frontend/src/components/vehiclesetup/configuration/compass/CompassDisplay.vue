@@ -11,6 +11,7 @@
 <script lang="ts">
 // based on https://github.com/bluerobotics/cockpit/blob/master/src/components/widgets/Compass.vue
 
+import { glMatrix, vec3 } from 'gl-matrix'
 import gsap from 'gsap'
 import Vue, { PropType } from 'vue'
 
@@ -19,13 +20,8 @@ import autopilot_data from '@/store/autopilot'
 import mavlink from '@/store/mavlink'
 import { Dictionary } from '@/types/common'
 import { deviceId } from '@/utils/deviceid_decoder'
-import { degrees, Vector3 } from '@/utils/math'
 import mavlink_store_get from '@/utils/mavlink'
-import { mag_heading } from '@/utils/mavlink_math'
-
-function radians(degs: number): number {
-  return degs * (Math.PI / 180)
-}
+import mag_heading from '@/utils/mavlink_math'
 
 function sequentialArray(length: number): number[] {
   return Array.from({ length }, (_, i) => i)
@@ -53,15 +49,15 @@ export default Vue.extend({
       required: true,
     },
     colors: {
-      type: Array as PropType<string[]>,
-      default: () => ['green', 'blue', 'purple'],
+      type: Object as PropType<Dictionary<string>>,
+      default: () => ({} as Dictionary<string>),
     },
   },
   data() {
     return {
       canvasSize: 300,
       renderVariables: {
-        yawAngleDegrees: [0, 0, 0, 0],
+        yawAngleDegrees: [0, 0, 0, 0, 0, 0],
       },
     }
   },
@@ -69,31 +65,31 @@ export default Vue.extend({
     canvas(): HTMLCanvasElement {
       return this.$refs.canvasRef as HTMLCanvasElement
     },
-    attitude(): Vector3 | null {
+    attitude(): vec3 | null {
       const msg = mavlink_store_get(mavlink, 'ATTITUDE.messageData.message') as Dictionary<number>
-      if (!msg) return new Vector3(0, 0, 0)
-      return new Vector3(msg.roll, msg.pitch, msg.yaw)
+      if (!msg) return vec3.fromValues(0, 0, 0)
+      return vec3.fromValues(msg.roll, msg.pitch, msg.yaw)
     },
-    imu1(): Vector3 | null {
+    imu1(): vec3 | null {
       const msg = mavlink_store_get(mavlink, 'RAW_IMU.messageData.message') as Dictionary<number>
       if (!msg) return null
-      return new Vector3(msg.xmag, msg.ymag, msg.zmag)
+      return vec3.fromValues(msg.xmag, msg.ymag, msg.zmag)
     },
-    imu2(): Vector3 | null {
+    imu2(): vec3 | null {
       const msg = mavlink_store_get(mavlink, 'SCALED_IMU2.messageData.message') as Dictionary<number>
       if (!msg) return null
-      return new Vector3(msg.xmag, msg.ymag, msg.zmag)
+      return vec3.fromValues(msg.xmag, msg.ymag, msg.zmag)
     },
-    imu3(): Vector3 | null {
+    imu3(): vec3 | null {
       const msg = mavlink_store_get(mavlink, 'SCALED_IMU3.messageData.message') as Dictionary<number>
       if (!msg) return null
-      return new Vector3(msg.xmag, msg.ymag, msg.zmag)
+      return vec3.fromValues(msg.xmag, msg.ymag, msg.zmag)
     },
     yaw(): number {
       if (this.attitude === null) {
         return 0
       }
-      return degrees(this.attitude.z)
+      return glMatrix.toDegree(this.attitude[2])
     },
     mag_headings(): (number | null)[] {
       if (!this.attitude) {
@@ -110,14 +106,22 @@ export default Vue.extend({
       }
       return ret
     },
+    gps_yaws(): (number | null)[] {
+      const yaws = []
+      const msg = mavlink_store_get(mavlink, 'GPS_RAW_INT.messageData.message') as Dictionary<number>
+      yaws.push(msg?.yaw ? msg.yaw / 100 : null)
+      const msg2 = mavlink_store_get(mavlink, 'GPS2_RAW.messageData.message') as Dictionary<number>
+      yaws.push(msg2?.yaw ? msg2.yaw / 100 : null)
+      return yaws
+    },
     headings(): (number | null)[] {
-      return [...this.mag_headings, this.yaw]
+      return [...this.mag_headings, ...this.gps_yaws, this.yaw]
     },
     primaryBaseColor(): string {
       return getComputedStyle(document.documentElement).getPropertyValue('--v-primary-base').trim()
     },
     declinationDegs(): number {
-      return degrees(autopilot_data.parameter('COMPASS_DEC')?.value ?? 0)
+      return glMatrix.toDegree(autopilot_data.parameter('COMPASS_DEC')?.value ?? 0)
     },
   },
   mounted() {
@@ -127,7 +131,7 @@ export default Vue.extend({
       this.canvas.height = this.canvasSize
     })
     this.initializeCanvas()
-    for (const msg of ['ATTITUDE', 'RAW_IMU', 'SCALED_IMU2', 'SCALED_IMU3']) {
+    for (const msg of ['ATTITUDE', 'RAW_IMU', 'SCALED_IMU2', 'SCALED_IMU3', 'GPS_RAW_INT', 'GPS2_RAW']) {
       mavlink.setMessageRefreshRate({ messageName: msg, refreshRate: 10 })
     }
   },
@@ -161,7 +165,7 @@ export default Vue.extend({
       ctx.textBaseline = 'middle'
 
       const outerCircleRadius = 0.7 * halfCanvasSize
-      const innerIndicatorRadius = 0.4 * halfCanvasSize
+      const innerIndicatorRadius = 0.45 * halfCanvasSize
       const outerIndicatorRadius = 0.55 * halfCanvasSize
 
       // Start drawing from the center
@@ -172,12 +176,18 @@ export default Vue.extend({
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
 
-      const verticalOffset = 0.5 * this.renderVariables.yawAngleDegrees.length * 10
+      const verticalOffset = 0.2 * this.renderVariables.yawAngleDegrees.length * 10
       // Iterate over the devices and draw the legend
       for (const [index, device] of this.compasses.slice(0, 3).entries()) {
-        const color = this.colors[device.paramValue]
-        ctx.fillStyle = color
-
+        // check if our device is in the colors dict
+        const paramValue = `${device.paramValue}`
+        if (paramValue in this.colors) {
+          // if it is, set the color to the color in the dict
+          ctx.fillStyle = this.colors[paramValue]
+        } else {
+          // if it is not, set the color to black
+          ctx.fillStyle = 'black'
+        }
         const text = device.deviceName ?? 'Unknown'
         ctx.fillText(text, 0, +verticalOffset + index * 20 - this.renderVariables.yawAngleDegrees.length * 10)
       }
@@ -188,14 +198,26 @@ export default Vue.extend({
         0,
         verticalOffset + this.compasses.slice(0, 3).length * 20 - this.renderVariables.yawAngleDegrees.length * 10,
       )
+      ctx.fillStyle = this.colors.GPS1
+      ctx.fillText(
+        'GPS1',
+        0,
+        verticalOffset + this.compasses.slice(0, 3).length * 20 - this.renderVariables.yawAngleDegrees.length * 10 + 20,
+      )
+      ctx.fillStyle = this.colors.GPS2
+      ctx.fillText(
+        'GPS2',
+        0,
+        verticalOffset + this.compasses.slice(0, 3).length * 20 - this.renderVariables.yawAngleDegrees.length * 10 + 40,
+      )
       ctx.restore()
 
-      ctx.rotate(radians(-90))
+      ctx.rotate(glMatrix.toRadian(-90))
 
       for (const [angleDegrees, angleName] of Object.entries(mainAngles)) {
         ctx.save()
 
-        ctx.rotate(radians(Number(angleDegrees)))
+        ctx.rotate(glMatrix.toRadian(Number(angleDegrees)))
         ctx.beginPath()
         ctx.moveTo(outerIndicatorRadius, 0)
         ctx.lineTo(outerCircleRadius, 0)
@@ -204,7 +226,7 @@ export default Vue.extend({
         ctx.textBaseline = 'bottom'
         ctx.font = `bold ${0.7 * fontSize}px Arial`
         ctx.translate(outerCircleRadius * 1.025, 0)
-        ctx.rotate(radians(90))
+        ctx.rotate(glMatrix.toRadian(90))
         ctx.fillText(angleName, 0, 0)
 
         ctx.stroke()
@@ -216,7 +238,7 @@ export default Vue.extend({
         if (angleDegrees % 9 !== 0) continue
         ctx.save()
         ctx.lineWidth = 0.25 * baseLineWidth
-        ctx.rotate(radians(Number(angleDegrees)))
+        ctx.rotate(glMatrix.toRadian(Number(angleDegrees)))
         ctx.beginPath()
         ctx.moveTo(1.1 * outerIndicatorRadius, 0)
         ctx.lineTo(outerCircleRadius, 0)
@@ -226,30 +248,44 @@ export default Vue.extend({
 
       // Draw outer circle
       ctx.beginPath()
-      ctx.arc(0, 0, outerCircleRadius, 0, radians(360))
+      ctx.arc(0, 0, outerCircleRadius, 0, glMatrix.toRadian(360))
       ctx.stroke()
 
       // Draw central indicator
+      let usedIndex = 0
       for (const [index, angleDegrees] of this.headings.entries()) {
         if (angleDegrees === null) continue
-        const paramValue = this.compasses?.[index]?.paramValue ?? this.colors.length
-        const color = this.colors[paramValue]
+        const paramValue = this.compasses?.[index]?.paramValue
+
+        let color = this.primaryBaseColor
+        if (index <= 2 && this.colors[paramValue]) {
+          color = this.colors[paramValue]
+        } else if (index === 3) {
+          color = this.colors.GPS1
+        } else if (index === 4) {
+          color = this.colors.GPS2
+        } else if (index === 5) {
+          color = this.primaryBaseColor
+        }
         ctx.save()
         this.renderVariables.yawAngleDegrees[index] = angleDegrees
-        ctx.rotate(radians(angleDegrees))
+        ctx.rotate(glMatrix.toRadian(angleDegrees))
         ctx.beginPath()
         ctx.lineWidth = 1
         ctx.strokeStyle = color
         ctx.fillStyle = color
-        const triangleBaseSize = 0.05 * halfCanvasSize - index
-        ctx.moveTo(innerIndicatorRadius, triangleBaseSize)
-        ctx.lineTo(outerIndicatorRadius - index - 0.5 * triangleBaseSize, 0)
-        ctx.lineTo(innerIndicatorRadius, -triangleBaseSize)
-        ctx.lineTo(innerIndicatorRadius, triangleBaseSize)
+        const triangleBaseSize = 0.03 * halfCanvasSize
+        const inner_position = 1.3 * innerIndicatorRadius - usedIndex * (outerIndicatorRadius - innerIndicatorRadius)
+        const outer_position = 1.3 * outerIndicatorRadius - usedIndex * (outerIndicatorRadius - innerIndicatorRadius)
+        ctx.moveTo(inner_position, triangleBaseSize)
+        ctx.lineTo(outer_position - triangleBaseSize, 0)
+        ctx.lineTo(inner_position, -triangleBaseSize)
+        ctx.lineTo(inner_position, triangleBaseSize)
         ctx.closePath()
         ctx.fill()
         ctx.stroke()
         ctx.restore()
+        usedIndex += 1
       }
     },
     initializeCanvas() {

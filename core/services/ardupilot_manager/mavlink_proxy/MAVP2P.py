@@ -3,8 +3,7 @@ import subprocess
 from typing import Optional
 
 from mavlink_proxy.AbstractRouter import AbstractRouter
-from mavlink_proxy.Endpoint import Endpoint
-from typedefs import EndpointType
+from mavlink_proxy.Endpoint import Endpoint, EndpointType
 
 
 class MAVP2P(AbstractRouter):
@@ -36,9 +35,10 @@ class MAVP2P(AbstractRouter):
                 return f"udpc:{endpoint.place}:{endpoint.argument}"
             raise ValueError(f"Endpoint of type {endpoint.connection_type} not supported on MAVP2P.")
 
-        endpoints = " ".join([convert_endpoint(endpoint) for endpoint in [master_endpoint, *self.endpoints()]])
+        filtered_endpoints = Endpoint.filter_enabled(self.endpoints())
+        endpoints = " ".join([convert_endpoint(endpoint) for endpoint in [master_endpoint, *filtered_endpoints]])
 
-        return f"{self.binary()} {endpoints} --streamreq-frequency=10"
+        return f"{self.binary()} {endpoints} --streamreq-disable"
 
     @staticmethod
     def name() -> str:

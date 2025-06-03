@@ -1,10 +1,20 @@
+from enum import Enum
 from typing import Any, Dict, Iterable, Optional, Type
 
 import validators
 from pydantic import constr, root_validator
 from pydantic.dataclasses import dataclass
 
-from typedefs import EndpointType
+
+class EndpointType(str, Enum):
+    """Supported Mavlink endpoint types."""
+
+    UDPServer = "udpin"
+    UDPClient = "udpout"
+    TCPServer = "tcpin"
+    TCPClient = "tcpout"
+    Serial = "serial"
+    Zenoh = "zenoh"
 
 
 @dataclass
@@ -32,8 +42,8 @@ class Endpoint:
             EndpointType.UDPClient,
             EndpointType.TCPServer,
             EndpointType.TCPClient,
+            EndpointType.Zenoh,
         ]:
-            # pylint: disable-next=too-many-function-args
             if not (validators.domain(place) or validators.ipv4(place) or validators.ipv6(place)):
                 raise ValueError(f"Invalid network address: {place}")
             if argument not in range(1, 65536):
@@ -67,7 +77,7 @@ class Endpoint:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, type(self)):
             raise NotImplementedError
-        return str(self) == str(other)
+        return str(self) == str(other) and self.connection_type == other.connection_type and self.place == other.place
 
 
 VALID_SERIAL_BAUDRATES = [

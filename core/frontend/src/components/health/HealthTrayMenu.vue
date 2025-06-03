@@ -137,7 +137,7 @@
 import Vue from 'vue'
 
 import mavlink2rest from '@/libs/MAVLink2Rest'
-import { MavType } from '@/libs/MAVLink2Rest/mavlink2rest-ts/messages/mavlink2rest-enum'
+import { MavModeFlag, MavType } from '@/libs/MAVLink2Rest/mavlink2rest-ts/messages/mavlink2rest-enum'
 import autopilot_data from '@/store/autopilot'
 import mavlink from '@/store/mavlink'
 import system_information from '@/store/system-information'
@@ -156,7 +156,9 @@ export default Vue.extend({
   computed: {
     cpu_temperature(): string {
       const temperature_sensors = system_information.system?.temperature
-      const main_sensor = temperature_sensors?.find((sensor) => sensor.name === 'CPU')
+      const main_sensor = temperature_sensors?.find(
+        (sensor) => sensor.name.toLowerCase().includes('cpu') || sensor.name.toLowerCase().includes('soc'),
+      )
       return main_sensor ? main_sensor.temperature.toFixed(1) : 'Loading..'
     },
     cpu_throttled() : boolean {
@@ -212,6 +214,7 @@ export default Vue.extend({
       }
       autopilot_data.setSystemId(message?.header.system_id)
       autopilot_data.setAutopilotType(message?.message.autopilot.type)
+      autopilot_data.setVehicleArmed(Boolean(message?.message.base_mode.bits & MavModeFlag.MAV_MODE_FLAG_SAFETY_ARMED))
       this.last_heartbeat_date = new Date()
     }).setFrequency(0)
   },

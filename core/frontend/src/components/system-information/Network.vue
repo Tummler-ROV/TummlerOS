@@ -24,7 +24,7 @@
 import Vue from 'vue'
 
 import NetworkCard from '@/components/system-information/NetworkCard.vue'
-import system_information, { FetchType } from '@/store/system-information'
+import system_information from '@/store/system-information'
 import { Network } from '@/types/system-information/system'
 
 export default Vue.extend({
@@ -39,11 +39,8 @@ export default Vue.extend({
   },
   computed: {
     networks(): Network[] {
-      return system_information.system?.network ?? []
+      return system_information.system?.network.sort((first, second) => first.name.localeCompare(second.name)) ?? []
     },
-  },
-  mounted() {
-    this.timer = setInterval(() => system_information.fetchSystemInformation(FetchType.SystemNetworkType), 2000)
   },
   beforeDestroy() {
     clearInterval(this.timer)

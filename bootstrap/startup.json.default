@@ -12,10 +12,10 @@
             },
             "/sys/": {
                 "bind": "/sys/",
-                "mode": "ro"
+                "mode": "rw"
             },
-            "/var/run/wpa_supplicant/wlan0": {
-                "bind": "/var/run/wpa_supplicant/wlan0",
+            "/var/run/wpa_supplicant": {
+                "bind": "/var/run/wpa_supplicant",
                 "mode": "rw"
             },
             "/tmp/wpa_playground": {
@@ -36,6 +36,14 @@
             },
             "/home/pi/.ssh": {
                 "bind": "/home/pi/.ssh",
+                "mode": "rw"
+            },
+            "/home/pi/.docker": {
+                "bind": "/home/pi/.docker",
+                "mode": "rw"
+            },
+            "/root/.docker": {
+                "bind": "/root/.docker",
                 "mode": "rw"
             },
             "/etc/blueos": {
@@ -65,6 +73,10 @@
             "/etc/resolv.conf.host": {
                 "bind": "/etc/resolv.conf.host",
                 "mode": "ro"
+            },
+            "/var/run/dbus": {
+                "bind": "/var/run/dbus",
+                "mode": "rw"
             }
         },
         "privileged": true

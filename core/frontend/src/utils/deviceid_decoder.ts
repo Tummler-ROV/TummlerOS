@@ -1,6 +1,6 @@
 // based on https://github.com/ArduPilot/ardupilot/blob/master/Tools/scripts/decode_devid.py
 
-enum BUS_TYPE {
+export enum BUS_TYPE {
   I2C = 1,
   SPI = 2,
   UAVCAN = 3,
@@ -118,14 +118,14 @@ export interface deviceId {
     paramValue: number
     deviceIdNumber: number
     deviceName?: string
-    busType: string
+    busType: BUS_TYPE
     bus: number
     address: string
     devtype: number
 }
 
 export default function decode(device: string, devid: number): deviceId {
-  const busType = BUS_TYPE[devid & 0x07]
+  const busType = devid & 0x07 as BUS_TYPE
   const bus = devid >> 3 & 0x1F
   const address = devid >> 8 & 0xFF
   const devtype = devid >> 16
@@ -137,7 +137,7 @@ export default function decode(device: string, devid: number): deviceId {
   if (device.startsWith('COMPASS')) {
     // When compass uses UAVCAN, the devtype is sensor_id + 1
     // So we ignore it to avoid showing up the wrong device name
-    switch (bus) {
+    switch (busType) {
       // When compass uses UAVCAN, the devtype is sensor_id + 1
       // So we ignore it to avoid showing up the wrong device name
       case BUS_TYPE.UAVCAN:

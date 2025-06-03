@@ -7,16 +7,18 @@ from loguru import logger
 # Plugins
 # pylint: disable=unused-import
 import mavlink_proxy.MAVLinkRouter
+import mavlink_proxy.MAVLinkServer
 import mavlink_proxy.MAVP2P
 import mavlink_proxy.MAVProxy
-from exceptions import (
+from mavlink_proxy.AbstractRouter import AbstractRouter
+from mavlink_proxy.Endpoint import Endpoint
+from mavlink_proxy.exceptions import (
+    EndpointAlreadyExists,
     EndpointCreationFail,
     EndpointDeleteFail,
     EndpointUpdateFail,
     NoMasterMavlinkEndpoint,
 )
-from mavlink_proxy.AbstractRouter import AbstractRouter
-from mavlink_proxy.Endpoint import Endpoint
 
 
 class Manager:
@@ -112,7 +114,15 @@ class Manager:
     def master_endpoint(self) -> Optional[Endpoint]:
         return self.tool.master_endpoint
 
+    @master_endpoint.setter
+    def master_endpoint(self, master_endpoint: Endpoint) -> None:
+        self.tool.master_endpoint = master_endpoint
+
     async def start(self, master_endpoint: Endpoint) -> None:
+        # If the tool is already running, don't start it again to avoid port conflicts
+        if self.should_be_running and await self.is_running():
+            return
+
         if not self.tool:
             logger.info("No tool selected. Falling back to the first one found")
             self.tool = self.available_interfaces()[0]()
@@ -120,16 +130,24 @@ class Manager:
         await self.tool.start(master_endpoint)
         self._last_valid_endpoints = self.endpoints()
 
-    async def set_preferred_router(self, router_name: str) -> None:
+    async def set_preferred_router(self, router_name: str, default_endpoints: Optional[List[Endpoint]] = None) -> None:
+        if default_endpoints is None:
+            default_endpoints = []
+
         try:
             endpoints = self.endpoints()
             master_endpoint = self.master_endpoint
-            await self.tool.exit()
+            await self.stop()
             self.tool = AbstractRouter.get_interface(router_name)()
-            for endpoint in endpoints:
-                self.tool.add_endpoint(endpoint)
+            for endpoint in endpoints | set(default_endpoints):
+                try:
+                    self.tool.add_endpoint(endpoint)
+                except EndpointAlreadyExists:
+                    pass
+                except Exception as error:
+                    logger.warning(str(error))
             if master_endpoint:
-                await self.tool.start(master_endpoint)
+                await self.start(master_endpoint)
         except Exception as error:
             logger.error(f"Failed to set preferred router to {router_name}. {error}")
 
@@ -137,8 +155,10 @@ class Manager:
         self.should_be_running = False
         await self.tool.exit()
 
-    async def restart(self) -> None:
+    async def restart(self, master_endpoint: Optional[Endpoint] = None) -> None:
         self.should_be_running = False
+        if master_endpoint:
+            self.tool.master_endpoint = master_endpoint
         await self.tool.restart()
         self._last_valid_endpoints = self.endpoints()
         self.should_be_running = True

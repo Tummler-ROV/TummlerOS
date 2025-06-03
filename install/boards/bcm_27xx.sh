@@ -3,11 +3,12 @@
 echo "Configuring BCM27XX board (Raspberry Pi 4).."
 
 VERSION="${VERSION:-master}"
-GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-bluerobotics/blueos-docker}
+GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-bluerobotics/BlueOS}
 REMOTE="${REMOTE:-https://raw.githubusercontent.com/${GITHUB_REPOSITORY}}"
 ROOT="$REMOTE/$VERSION"
 CMDLINE_FILE=/boot/cmdline.txt
-alias curl="curl --retry 6 --max-time 15 --retry-all-errors"
+CONFIG_FILE=/boot/config.txt
+alias curl="curl --retry 6 --max-time 15 --retry-all-errors --retry-delay 20 --connect-timeout 60"
 
 # Download, compile, and install spi0 mosi-only device tree overlay for
 # neopixel LED on navigator board
@@ -29,8 +30,19 @@ for STRING in \
     "gpio=" \
     "dwc2" \
     ; do \
-    sudo sed -i "/$STRING/d" /boot/config.txt
+    sudo sed -i "/$STRING/d" $CONFIG_FILE
 done
+
+# add [pi4] if it is not there
+if ! grep -q "\[pi4\]" $CONFIG_FILE; then
+    echo "[pi4]" >> $CONFIG_FILE
+fi
+# find the line number of the [pi4] tag
+
+line_number=$(grep -n "\[pi4\]" $CONFIG_FILE | awk -F ":" '{print $1}')
+echo "Line number of [pi4] tag: $line_number"
+
+
 for STRING in \
     "enable_uart=1" \
     "dtoverlay=uart1" \
@@ -47,9 +59,9 @@ for STRING in \
     "dtoverlay=spi1-3cs" \
     "gpio=11,24,25=op,pu,dh" \
     "gpio=37=op,pd,dl" \
-    "dtoverlay=dwc2" \
+    "dtoverlay=dwc2,dr_mode=otg" \
     ; do \
-    echo "$STRING" | sudo tee -a /boot/config.txt
+    sed -i "$line_number r /dev/stdin" $CONFIG_FILE <<< "$STRING"
 done
 
 # Check for valid modules file to load kernel modules
@@ -84,10 +96,11 @@ grep -q dwc2 $CMDLINE_FILE || (
     sed -i '1 s/$/ modules-load=dwc2,g_ether/' $CMDLINE_FILE
 )
 
-# Update raspberry pi firmware
+# Update raspberry pi firmware if on bullseye
 # this is required to avoid 'i2c transfer timed out' kernel errors
 # on older firmware versions
-if grep -q ID=raspbian < /etc/os-release; then
+# kernels/firmware from bookworm and higher do not require this
+if grep -q ID=raspbian < /etc/os-release && grep -q VERSION_CODENAME=bullseye < /etc/os-release; then
     RPI_FIRMWARE_VERSION=1340be4
     if sudo JUST_CHECK=1 rpi-update $RPI_FIRMWARE_VERSION | grep "Firmware update required"; then
         echo "- Run rpi update."

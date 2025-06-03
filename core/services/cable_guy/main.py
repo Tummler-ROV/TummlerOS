@@ -1,5 +1,4 @@
 #! /usr/bin/env python3
-import argparse
 import asyncio
 import logging
 import os
@@ -8,7 +7,6 @@ from typing import Any, List
 
 from commonwealth.utils.apis import GenericErrorHandlingRoute, PrettyJSONResponse
 from commonwealth.utils.decorators import temporary_cache
-from commonwealth.utils.general import limit_ram_usage
 from commonwealth.utils.logs import InterceptHandler, init_logger
 from fastapi import Body, FastAPI
 from fastapi.responses import HTMLResponse
@@ -17,40 +15,14 @@ from loguru import logger
 from uvicorn import Config, Server
 
 from api.dns import DnsData
-from api.manager import (
-    AddressMode,
-    EthernetManager,
-    InterfaceAddress,
-    NetworkInterface,
-    NetworkInterfaceMetricApi,
-)
-
-SERVICE_NAME = "cable-guy"
-
-limit_ram_usage()
-
-parser = argparse.ArgumentParser(description="CableGuy service for Blue Robotics BlueOS")
-parser.add_argument(
-    "--default_config",
-    dest="default_config",
-    type=str,
-    default="bluerov2",
-    choices=["bluerov2"],
-    help="Specify configuration to use if settings file cannot be loaded or is not found. Defaults to 'bluerov2'.",
-)
-
-args = parser.parse_args()
-
-if args.default_config == "bluerov2":
-    default_configs = [
-        NetworkInterface(name="eth0", addresses=[InterfaceAddress(ip="192.168.2.2", mode=AddressMode.Unmanaged)]),
-        NetworkInterface(name="usb0", addresses=[InterfaceAddress(ip="192.168.3.1", mode=AddressMode.Server)]),
-    ]
+from api.manager import EthernetManager, NetworkInterface, NetworkInterfaceMetricApi
+from config import SERVICE_NAME
+from typedefs import Route
 
 logging.basicConfig(handlers=[InterceptHandler()], level=0)
 init_logger(SERVICE_NAME)
 
-manager = EthernetManager(default_configs)
+manager = EthernetManager()
 
 app = FastAPI(
     title="Cable Guy API",
@@ -71,9 +43,9 @@ def retrieve_ethernet_interfaces() -> Any:
 
 @app.post("/ethernet", response_model=NetworkInterface, summary="Configure a ethernet interface.")
 @version(1, 0)
-def configure_interface(interface: NetworkInterface = Body(...)) -> Any:
+async def configure_interface(interface: NetworkInterface = Body(...)) -> Any:
     """REST API endpoint to configure a new ethernet interface or modify an existing one."""
-    manager.set_configuration(interface)
+    await manager.set_configuration(interface)
     manager.save()
     return interface
 
@@ -111,9 +83,9 @@ def delete_address(interface_name: str, ip_address: str) -> Any:
 
 @app.post("/dhcp", summary="Add local DHCP server to interface.")
 @version(1, 0)
-def add_dhcp_server(interface_name: str, ipv4_gateway: str) -> Any:
+async def add_dhcp_server(interface_name: str, ipv4_gateway: str, is_backup_server: bool = False) -> Any:
     """REST API endpoint to enable/disable local DHCP server."""
-    manager.add_dhcp_server_to_interface(interface_name, ipv4_gateway)
+    manager.add_dhcp_server_to_interface(interface_name, ipv4_gateway, is_backup_server)
     manager.save()
 
 
@@ -147,6 +119,37 @@ def update_host_dns(dns_data: DnsData) -> Any:
     manager.dns.update_host_nameservers(dns_data)
 
 
+@app.post("/route", summary="Add route to interface.")
+@version(1, 0)
+def add_route(interface_name: str, route: Route) -> Any:
+    """REST API endpoint to add route."""
+    manager.add_route(interface_name, route)
+    manager.save()
+
+
+@app.delete("/route", summary="Remove route from interface.")
+@version(1, 0)
+def remove_route(interface_name: str, route: Route) -> Any:
+    """REST API endpoint remove route."""
+    manager.remove_route(interface_name, route)
+    manager.save()
+
+
+@app.get("/route", summary="Get the interface routes.")
+@version(1, 0)
+def get_route(interface_name: str) -> List[Route]:
+    """REST API endpoint to get routes."""
+    return list(manager.get_routes(interface_name, ignore_unmanaged=False))
+
+
+app = VersionedFastAPI(
+    app,
+    version="1.0.0",
+    prefix_format="/v{major}.{minor}",
+    enable_latest=True,
+)
+
+
 @app.get("/")
 async def root() -> HTMLResponse:
     html_content = """
@@ -159,13 +162,6 @@ async def root() -> HTMLResponse:
     return HTMLResponse(content=html_content, status_code=200)
 
 
-app = VersionedFastAPI(
-    app,
-    version="1.0.0",
-    prefix_format="/v{major}.{minor}",
-    enable_latest=True,
-)
-
 if __name__ == "__main__":
     if os.geteuid() != 0:
         logger.error(
@@ -175,8 +171,9 @@ if __name__ == "__main__":
 
     loop = asyncio.new_event_loop()
 
-    # # Running uvicorn with log disabled so loguru can handle it
+    # Running uvicorn with log disabled so loguru can handle it
     config = Config(app=app, loop=loop, host="0.0.0.0", port=9090, log_config=None)
     server = Server(config)
-
+    loop.run_until_complete(manager.initialize())
+    loop.create_task(manager.watchdog())
     loop.run_until_complete(server.serve())

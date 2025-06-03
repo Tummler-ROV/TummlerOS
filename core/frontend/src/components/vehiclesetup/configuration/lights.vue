@@ -1,12 +1,12 @@
 <template>
-  <div class="d-flex">
+  <div class="main-container">
     <v-card>
       <v-card-title> Lights 1 (RCIN9) </v-card-title>
       <v-card-text>
-        Here you can configure what pin outputs the signal for the first set of lights.
+        The output pin for the primary set of lights:
         <v-select
           v-model="lights1_new_param"
-          :items="recommended_params"
+          :items="servo_params"
           :item-text="friendlyName"
           :item-value="'name'"
           label="Lights 1"
@@ -16,10 +16,10 @@
     <v-card>
       <v-card-title> Lights 2 (RCIN10) </v-card-title>
       <v-card-text>
-        What pin outputs the signal for the second set of lights.
+        The output pin for the secondary set of lights:
         <v-select
           v-model="lights2_new_param"
-          :items="recommended_params"
+          :items="servo_params"
           :item-text="friendlyName"
           :item-value="'name'"
           label="Lights 2"
@@ -29,7 +29,7 @@
     <v-card>
       <v-card-title> Joystick steps </v-card-title>
       <v-card-text>
-        How many button presses it takes to go from 0% to 100% brightness.
+        Number of button presses to step from 0% to 100% brightness:
         <br>
         {{ light_steps?.value }} steps result in a {{ (100 / light_steps?.value).toFixed(1) }}%
         increase per button press.
@@ -68,13 +68,6 @@ export default {
   computed: {
     light_steps(): Parameter | undefined {
       return autopilot_data.parameter('JS_LIGHTS_STEPS')
-    },
-    recommended_params(): Parameter[] {
-      // return parameters in servo_params that are on channel 9 and higher
-      return this.servo_params.filter((param) => {
-        const servoNumber = parseInt(param.name.replace('SERVO', '').split('_')[0], 10)
-        return servoNumber >= 9
-      })
     },
     servo_params(): Parameter[] {
       return autopilot_data.parameterRegex('SERVO[0-9]+_FUNCTION')
@@ -146,3 +139,10 @@ export default {
   },
 }
 </script>
+<style scoped>
+.main-container {
+  display: flex;
+  column-gap: 10px;
+  padding: 10px;
+}
+</style>

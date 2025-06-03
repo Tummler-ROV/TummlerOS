@@ -34,7 +34,7 @@
               <td v-tooltip="'Inertial Navigation Sensor'">
                 INS
               </td>
-              <td>{{ imu.busType }} {{ imu.bus }}</td>
+              <td>{{ print_bus(imu.busType) }} {{ imu.bus }}</td>
               <td>{{ `0x${imu.address}` }}</td>
               <td>
                 <v-icon
@@ -52,7 +52,7 @@
                   mdi-emoticon-sad-outline
                 </v-icon>
                 <v-icon
-                  v-if="imu_temperature_is_calibrated[imu.param]"
+                  v-if="imu_temperature_is_calibrated[imu.param].calibrated"
                   v-tooltip="'Sensor thermometer is calibrated and good to use'"
                   color="green"
                 >
@@ -75,7 +75,7 @@
               <td>
                 {{ compass_description[compass.param] }}
               </td>
-              <td>{{ compass.busType }} {{ compass.bus }}</td>
+              <td>{{ print_bus(compass.busType) }} {{ compass.bus }}</td>
               <td>{{ `0x${compass.address}` }}</td>
               <td>
                 <v-icon
@@ -102,9 +102,21 @@
               <td v-tooltip="'Used to estimate altitude/depth'">
                 {{ get_pressure_type[baro.param] }} Pressure
               </td>
-              <td>{{ baro.busType }} {{ baro.bus }}</td>
+              <td>{{ print_bus(baro.busType) }} {{ baro.bus }}</td>
               <td>{{ `0x${baro.address}` }}</td>
               <td>{{ baro_status[baro.param] }}</td>
+            </tr>
+            <tr
+              v-for="sensor in celsius"
+              :key="sensor.param"
+            >
+              <td><b>{{ sensor.deviceName ?? 'UNKNOWN' }}</b></td>
+              <td v-tooltip="'Used to estimate altitude/depth'">
+                Temperature
+              </td>
+              <td>{{ print_bus(sensor.busType) }} {{ sensor.bus }}</td>
+              <td>{{ `0x${sensor.address}` }}</td>
+              <td>{{ celsius_temperature }} ºC</td>
             </tr>
           </tbody>
         </template>
@@ -121,8 +133,10 @@ import autopilot from '@/store/autopilot_manager'
 import mavlink from '@/store/mavlink'
 import { printParam } from '@/types/autopilot/parameter'
 import { Dictionary } from '@/types/common'
-import decode, { deviceId } from '@/utils/deviceid_decoder'
+import decode, { BUS_TYPE, deviceId } from '@/utils/deviceid_decoder'
 import mavlink_store_get from '@/utils/mavlink'
+
+import { imu_is_calibrated, imu_temperature_is_calibrated } from '../configuration/common'
 
 export default Vue.extend({
   name: 'OnboardSensors',
@@ -141,6 +155,27 @@ export default Vue.extend({
       return autopilot_data.parameterRegex('^BARO.*_DEVID')
         .filter((param) => param.value !== 0)
         .map((parameter) => decode(parameter.name, parameter.value))
+    },
+    // DEV_ID params do not exist yet for temperature sensors, so here we detect the incoming message instead
+    celsius_temperature(): number | undefined {
+      return mavlink_store_get(mavlink, 'SCALED_PRESSURE3.messageData.message.temperature') as number / 100.0
+    },
+    celsius(): deviceId[] {
+      if (!this.celsius_temperature) {
+        return []
+      }
+      return [
+        {
+          bus: 1,
+          paramValue: 0,
+          deviceIdNumber: 0,
+          devtype: 0,
+          busType: BUS_TYPE.I2C,
+          address: '77',
+          deviceName: 'Celsius',
+          param: '-',
+        },
+      ]
     },
     compass_description(): Dictionary<string> {
       const results = {} as Dictionary<string>
@@ -201,56 +236,32 @@ export default Vue.extend({
           results[compass.param] = false
           continue
         }
-        const scale_param_name = `COMPASS_SCALE${compass_number}`
-        const scale_param = autopilot_data.parameter(scale_param_name)
         const is_at_default_offsets = offset_params.every((param) => param?.value === 0.0)
         const is_at_default_diagonals = diagonal_params.every((param) => param?.value === 0.0)
-        results[compass.param] = offset_params.isEmpty() || diagonal_params.isEmpty()
-          || !is_at_default_offsets || !is_at_default_diagonals || scale_param?.value !== 0.0
+        results[compass.param] = !offset_params.isEmpty() && !diagonal_params.isEmpty()
+          && (!is_at_default_offsets || !is_at_default_diagonals)
       }
       return results
     },
     imu_is_calibrated(): Dictionary<boolean> {
-      const results = {} as Dictionary<boolean>
-      for (const imu of this.imus) {
-        const param_radix = imu.param.split('_ID')[0]
-        const offset_params_names = [`${param_radix}OFFS_X`, `${param_radix}OFFS_Y`, `${param_radix}OFFS_Z`]
-        const scale_params_names = [`${param_radix}SCAL_X`, `${param_radix}SCAL_Y`, `${param_radix}SCAL_Z`]
-        const offset_params = offset_params_names.map(
-          (name) => autopilot_data.parameter(name),
-        )
-        const scale_params = scale_params_names.map(
-          (name) => autopilot_data.parameter(name),
-        )
-        const is_at_default_offsets = offset_params.every((param) => param?.value === 0.0)
-        const is_at_default_scale = scale_params.every((param) => param?.value === 1.0)
-        results[imu.param] = offset_params.isEmpty() || scale_params.isEmpty()
-        || !is_at_default_offsets || !is_at_default_scale
-      }
-      return results
+      return imu_is_calibrated(this.imus, autopilot_data)
     },
-    imu_temperature_is_calibrated(): Dictionary<boolean> {
-      const results = {} as Dictionary<boolean>
-      for (const imu of this.imus) {
-        let param_radix = imu.param.split('_ID')[0]
-        // CALTEMP parameters contains ID for the first sensor, _ID does not, so we need to add it
-        if (!/\d$/.test(param_radix)) {
-          param_radix += '1'
-        }
-        const name = `${param_radix}_CALTEMP`
-        const parameter = autopilot_data.parameter(name)
-        results[imu.param] = parameter !== undefined && parameter.value !== -300
-      }
-      return results
+    imu_temperature_is_calibrated(): Dictionary<{ calibrated: boolean, calibrationTemperature: number }> {
+      return imu_temperature_is_calibrated(this.imus, autopilot_data)
+    },
+    external_i2c_bus(): number | undefined {
+      return autopilot_data.parameter('BARO_EXT_BUS')?.value
     },
     is_water_baro(): Dictionary<boolean> {
       const results = {} as Dictionary<boolean>
-      for (const compass of this.compasses) {
-        if (['MS5837', 'MS5611', 'KELLERLD'].includes(compass.deviceName ?? '--')
-        && autopilot.vehicle_type === 'Submarine') {
-          results[compass.param] = true
+      for (const baro of this.baros) {
+        if (['MS5837', 'MS5611', 'KELLERLD'].includes(baro.deviceName ?? '--')
+        && autopilot.vehicle_type === 'Submarine' && baro.busType === BUS_TYPE.I2C
+        && baro.bus === this.external_i2c_bus) {
+          results[baro.param] = true
+          continue
         }
-        results[compass.param] = false
+        results[baro.param] = false
       }
       return results
     },
@@ -274,9 +285,10 @@ export default Vue.extend({
       for (const barometer of this.baros) {
         if (!this.is_water_baro[barometer.param]) {
           results[barometer.param] = 'Barometric'
+        } else {
+          const spec_gravity_param = autopilot_data.parameter('BARO_SPEC_GRAV')
+          results[barometer.param] = printParam(spec_gravity_param)
         }
-        const spec_gravity_param = autopilot_data.parameter('BARO_SPEC_GRAV')
-        results[barometer.param] = printParam(spec_gravity_param)
       }
       return results
     },
@@ -284,10 +296,13 @@ export default Vue.extend({
   mounted() {
     mavlink.setMessageRefreshRate({ messageName: 'SCALED_PRESSURE$', refreshRate: 1 })
     mavlink.setMessageRefreshRate({ messageName: 'SCALED_PRESSURE2$', refreshRate: 1 })
+    mavlink.setMessageRefreshRate({ messageName: 'SCALED_PRESSURE3$', refreshRate: 1 })
     mavlink.setMessageRefreshRate({ messageName: 'VFR_HUD', refreshRate: 1 })
   },
   methods: {
-
+    print_bus(bus: BUS_TYPE): string {
+      return BUS_TYPE[bus]
+    },
   },
 })
 </script>

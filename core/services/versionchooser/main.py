@@ -1,19 +1,22 @@
-#!/usr/bin/env python3
+#! /usr/bin/env python3
 import logging
 from typing import Any
 
 import aiodocker
 import connexion
 from aiohttp import web
-from commonwealth.utils.general import limit_ram_usage
 from commonwealth.utils.logs import InterceptHandler, init_logger
 from loguru import logger
 
+from docker_login import (
+    DockerLoginInfo,
+    get_docker_accounts,
+    make_docker_login,
+    make_docker_logout,
+)
 from utils.chooser import STATIC_FOLDER, VersionChooser
 
 SERVICE_NAME = "version-chooser"
-
-limit_ram_usage()
 
 logging.basicConfig(handlers=[InterceptHandler()], level=0)
 init_logger(SERVICE_NAME)
@@ -77,6 +80,24 @@ async def load(request: web.Request) -> Any:
 
 async def restart() -> Any:
     return await versionChooser.restart()
+
+
+async def docker_login(request: web.Request) -> None:
+    data = await request.json()
+    info = DockerLoginInfo.from_json(data)
+
+    return make_docker_login(info)
+
+
+async def docker_logout(request: web.Request) -> Any:
+    data = await request.json()
+    info = DockerLoginInfo.from_json(data)
+
+    return make_docker_logout(info)
+
+
+def docker_accounts() -> Any:
+    return get_docker_accounts()
 
 
 if __name__ == "__main__":

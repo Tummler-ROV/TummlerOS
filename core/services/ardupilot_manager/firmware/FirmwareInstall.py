@@ -8,6 +8,7 @@ from typing import Optional, Union
 
 from ardupilot_fw_decoder import BoardSubType, BoardType, Decoder
 from elftools.elf.elffile import ELFFile
+from loguru import logger
 
 from exceptions import FirmwareInstallFail, InvalidFirmwareFile, UnsupportedPlatform
 from firmware.FirmwareDownload import FirmwareDownloader
@@ -20,6 +21,7 @@ def get_board_id(platform: Platform) -> int:
         Platform.Pixhawk1: 9,
         Platform.Pixhawk4: 50,
         Platform.Pixhawk6X: 53,
+        Platform.Pixhawk6C: 56,
         Platform.CubeOrange: 140,
     }
     return ardupilot_board_ids.get(platform, -1)
@@ -42,6 +44,7 @@ def get_correspondent_decoder_platform(current_platform: Platform) -> Union[Boar
         Platform.SITL: BoardType.SITL,
         Platform.Navigator: BoardSubType.LINUX_NAVIGATOR,
         Platform.Argonot: BoardSubType.LINUX_NAVIGATOR,
+        Platform.Navigator64: BoardSubType.LINUX_NAVIGATOR,
         Platform.Tummler: BoardSubType.LINUX_TUMMLER,
     }
     return correspondent_decoder_platform.get(current_platform, BoardType.EMPTY)
@@ -97,6 +100,9 @@ class FirmwareInstaller:
             firm_board = BoardType(firm_decoder.fwversion.board_type)
             firm_sub_board = BoardSubType(firm_decoder.fwversion.board_subtype)
             current_decoder_platform = get_correspondent_decoder_platform(platform)
+            logger.debug(
+                f"firm_board: {firm_board}, firm_sub_board: {firm_sub_board}, current_decoder_platform: {current_decoder_platform}"
+            )
             if current_decoder_platform not in [firm_board, firm_sub_board]:
                 raise InvalidFirmwareFile(
                     (
@@ -133,7 +139,7 @@ class FirmwareInstaller:
         ## For more information: https://www.gnu.org/software/libc/manual/html_node/Permission-Bits.html
         os.chmod(firmware_path, firmware_path.stat().st_mode | stat.S_IXOTH | stat.S_IXUSR | stat.S_IXGRP)
 
-    def install_firmware(
+    async def install_firmware(
         self,
         new_firmware_path: pathlib.Path,
         board: FlightController,
@@ -154,7 +160,7 @@ class FirmwareInstaller:
             if not board.path:
                 raise ValueError("Board path not available.")
             firmware_uploader.set_autopilot_port(pathlib.Path(board.path))
-            firmware_uploader.upload(new_firmware_path)
+            await firmware_uploader.upload(new_firmware_path)
             return
         if firmware_format == FirmwareFormat.ELF:
             # Using copy() instead of move() since the last can't handle cross-device properly (e.g. docker binds)

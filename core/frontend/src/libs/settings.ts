@@ -1,5 +1,5 @@
 import vuetify from '@/plugins/vuetify'
-import settingsStore from '@/store/settings'
+import settingsStore, { SettingsStore } from '@/store/settings'
 
 class Settings {
   // eslint-disable-next-line
@@ -24,6 +24,16 @@ class Settings {
   }
 
   // eslint-disable-next-line
+  get is_dev_mode(): boolean {
+    return settingsStore.is_dev_mode
+  }
+
+  // eslint-disable-next-line
+  set is_dev_mode(value: boolean) {
+    settingsStore.setDevMode(value)
+  }
+
+  // eslint-disable-next-line
   get user_top_widgets(): string[] {
     return settingsStore.user_top_widgets || []
   }
@@ -45,16 +55,14 @@ class Settings {
   }
 
   // eslint-disable-next-line
-  run_tour_version(version: number) : Promise<void> {
-    return new Promise((resolve) => {
-      const store_tour_version = settingsStore.tour_version
-      if (version === store_tour_version) {
-        throw new Error(`Tour version (${version}) is the same as in store (${store_tour_version}})`)
-      }
+  async run_tour_version(version: number): Promise<void> {
+    await SettingsStore.start()
+    const store_tour_version = settingsStore.tour_version
+    if (version === store_tour_version) {
+      throw new Error(`Tour version (${version}) is the same as in store (${store_tour_version}})`)
+    }
 
-      settingsStore.setTourVersion(version)
-      resolve()
-    })
+    await settingsStore.setTourVersion(version)
   }
 }
 

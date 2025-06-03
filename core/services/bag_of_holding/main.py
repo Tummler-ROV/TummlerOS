@@ -8,7 +8,6 @@ import appdirs
 import dpath
 import uvicorn
 from commonwealth.utils.apis import GenericErrorHandlingRoute
-from commonwealth.utils.general import limit_ram_usage
 from commonwealth.utils.logs import InterceptHandler, init_logger
 from fastapi import Body, FastAPI, HTTPException
 from fastapi import Path as FastPath
@@ -19,8 +18,6 @@ from pydantic import BaseModel
 
 SERVICE_NAME = "bag-of-holding"
 FILE_PATH = Path(appdirs.user_config_dir(SERVICE_NAME, "db.json"))
-
-limit_ram_usage()
 
 logging.basicConfig(handlers=[InterceptHandler()], level=0)
 init_logger(SERVICE_NAME)
@@ -35,8 +32,6 @@ app = FastAPI(
 app.router.route_class = GenericErrorHandlingRoute
 logger.info(f"Starting Bag of Holding: {FILE_PATH}")
 
-app = FastAPI()
-
 
 class KeyValue(BaseModel):
     key: str
@@ -48,10 +43,19 @@ def read_db() -> Any:
         with open(FILE_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
-        return {}
+        logger.error("Database not found")
+    except json.decoder.JSONDecodeError as exception:
+        logger.error(f"Failed to parse json in database file: {exception}")
+    except Exception as exception:
+        logger.exception(exception)
+    return {}
 
 
 def write_db(data: Dict[str, Any]) -> None:
+    # Just to be sure that we'll be able to load it later
+    json_string = json.dumps(data)
+    json.loads(json_string)
+
     with open(FILE_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f)
 

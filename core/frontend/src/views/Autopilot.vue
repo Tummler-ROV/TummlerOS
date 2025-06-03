@@ -8,6 +8,21 @@
     <v-card>
       <v-card-title>Autopilot</v-card-title>
 
+      <v-tooltip bottom>
+        <template #activator="{ on, attrs }">
+          <v-btn
+            icon
+            class="wizard-btn"
+            v-bind="attrs"
+            v-on="on"
+            @click="enable_wizard"
+          >
+            <v-icon>mdi-wizard-hat</v-icon>
+          </v-btn>
+        </template>
+        <span>Click to activate wizard</span>
+      </v-tooltip>
+
       <img height="80" :src="banner" />
 
       <v-card-text>
@@ -28,7 +43,18 @@
           </v-row>
           <br>
         </div>
-        <v-expansion-panels>
+        <not-safe-overlay />
+        <v-expansion-panels v-if="is_external_board">
+          <v-expansion-panel>
+            <v-expansion-panel-header>
+              Master endpoint
+            </v-expansion-panel-header>
+            <v-expansion-panel-content>
+              <master-endpoint-manager />
+            </v-expansion-panel-content>
+          </v-expansion-panel>
+        </v-expansion-panels>
+        <v-expansion-panels v-else>
           <v-expansion-panel>
             <v-expansion-panel-header>
               Firmware update
@@ -62,7 +88,7 @@
           Change board
         </v-btn>
         <v-btn
-          v-if="settings.is_pirate_mode"
+          v-if="settings.is_pirate_mode && board_supports_start_stop"
           class="ma-1"
           :block="$vuetify.breakpoint.xs"
           color="secondary"
@@ -72,7 +98,7 @@
           Start autopilot
         </v-btn>
         <v-btn
-          v-if="settings.is_pirate_mode"
+          v-if="settings.is_pirate_mode && board_supports_start_stop"
           class="ma-1"
           :block="$vuetify.breakpoint.xs"
           color="secondary"
@@ -82,6 +108,7 @@
           Stop autopilot
         </v-btn>
         <v-btn
+          v-if="settings.is_pirate_mode && board_supports_restart"
           color="primary"
           class="ma-1"
           :block="$vuetify.breakpoint.xs"
@@ -106,20 +133,23 @@ import OpenPilotBanner from '@/assets/img/banners/OpenPilot.svg'
 import PX4Banner from '@/assets/img/banners/PX4.svg'
 import * as AutopilotManager from '@/components/autopilot/AutopilotManagerUpdater'
 import {
-  fetchAvailableBoards, fetchCurrentBoard, fetchFirmwareInfo, fetchVehicleType,
+  fetchAvailableBoards, fetchCurrentBoard, fetchFirmwareInfo, fetchFirmwareVehicleType, fetchVehicleType,
 } from '@/components/autopilot/AutopilotManagerUpdater'
 import AutopilotSerialConfiguration from '@/components/autopilot/AutopilotSerialConfiguration.vue'
 import BoardChangeDialog from '@/components/autopilot/BoardChangeDialog.vue'
 import FirmwareManager from '@/components/autopilot/FirmwareManager.vue'
+import MasterEndpointManager from '@/components/autopilot/MasterEndpointManager.vue'
+import NotSafeOverlay from '@/components/common/NotSafeOverlay.vue'
 import { MavAutopilot } from '@/libs/MAVLink2Rest/mavlink2rest-ts/messages/mavlink2rest-enum'
 import Notifier from '@/libs/notifier'
 import settings from '@/libs/settings'
+import { OneMoreTime } from '@/one-more-time'
 import autopilot_data from '@/store/autopilot'
 import autopilot from '@/store/autopilot_manager'
+import bag from '@/store/bag'
 import { FirmwareInfo, FlightController } from '@/types/autopilot'
 import { autopilot_service } from '@/types/frontend_services'
 import back_axios from '@/utils/api'
-import { callPeriodically, stopCallingPeriodically } from '@/utils/helper_functions'
 
 const notifier = new Notifier(autopilot_service)
 
@@ -129,14 +159,28 @@ export default Vue.extend({
     BoardChangeDialog,
     FirmwareManager,
     AutopilotSerialConfiguration,
+    NotSafeOverlay,
+    MasterEndpointManager,
   },
   data() {
     return {
       settings,
       show_board_change_dialog: false,
+      fetch_available_boards_task: new OneMoreTime({ delay: 5000, disposeWith: this }),
+      fetch_current_board_task: new OneMoreTime({ delay: 5000, disposeWith: this }),
+      fetch_firmware_info_task: new OneMoreTime({ delay: 5000, disposeWith: this }),
+      fetch_vehicle_type_task: new OneMoreTime({ delay: 5000, disposeWith: this }),
+      fetch_firmware_vehicle_type_task: new OneMoreTime({ delay: 5000, disposeWith: this }),
     }
   },
   computed: {
+    board_supports_start_stop(): boolean {
+      return this.current_board?.name !== 'Manual'
+    },
+    board_supports_restart(): boolean {
+      // this is a mavlink command, all boards should support it
+      return true
+    },
     autopilot_info(): Record<string, string> {
       let version = 'Unknown'
       if (this.firmware_info) {
@@ -148,7 +192,7 @@ export default Vue.extend({
         Manufacturer: this.current_board?.manufacturer ?? 'Unknown',
         'Mavlink platform': this.current_board?.platform ?? 'Unknown',
         'Firmware version': version,
-        'Vehicle type': this.vehicle_type ?? 'Unknown',
+        'Vehicle type': `${this.vehicle_type ?? 'Unknown'} (${this.firmware_vehicle_type ?? 'Unknown'})`,
       }
 
       if (this.current_board?.path) {
@@ -175,13 +219,19 @@ export default Vue.extend({
       if (!boardname) {
         return false
       }
-      return ['Navigator', 'SITL'].includes(boardname)
+      return ['Navigator', 'Navigator64', 'SITL'].includes(boardname)
+    },
+    is_external_board(): boolean {
+      return autopilot.current_board?.name === 'Manual'
     },
     current_board(): FlightController | null {
       return autopilot.current_board
     },
     firmware_info(): FirmwareInfo | null {
       return autopilot.firmware_info
+    },
+    firmware_vehicle_type(): string | null {
+      return autopilot.firmware_vehicle_type
     },
     vehicle_type(): string | null {
       return autopilot.vehicle_type
@@ -194,18 +244,26 @@ export default Vue.extend({
     },
   },
   mounted() {
-    callPeriodically(fetchAvailableBoards, 5000)
-    callPeriodically(fetchCurrentBoard, 5000)
-    callPeriodically(fetchFirmwareInfo, 5000)
-    callPeriodically(fetchVehicleType, 5000)
-  },
-  beforeDestroy() {
-    stopCallingPeriodically(fetchAvailableBoards)
-    stopCallingPeriodically(fetchCurrentBoard)
-    stopCallingPeriodically(fetchFirmwareInfo)
-    stopCallingPeriodically(fetchVehicleType)
+    this.fetch_available_boards_task.setAction(fetchAvailableBoards)
+    this.fetch_current_board_task.setAction(fetchCurrentBoard)
+    this.fetch_firmware_info_task.setAction(fetchFirmwareInfo)
+    this.fetch_vehicle_type_task.setAction(fetchVehicleType)
+    this.fetch_firmware_vehicle_type_task.setAction(fetchFirmwareVehicleType)
   },
   methods: {
+    async enable_wizard(): Promise<void> {
+      const payload = { version: 0 }
+      await bag.setData('wizard', payload)
+        .then((result) => {
+          if (result) {
+            this.$router.push('/')
+            window.location.reload()
+          }
+        })
+        .catch(() => {
+          notifier.pushBackError('ENABLE_WIZARD', 'Failed to enable wizard')
+        })
+    },
     async start_autopilot(): Promise<void> {
       autopilot.setRestarting(true)
       await back_axios({
@@ -243,3 +301,11 @@ export default Vue.extend({
   },
 })
 </script>
+
+<style scoped>
+.wizard-btn {
+  position: absolute;
+  right: 15px;
+  top: 0;
+}
+</style>

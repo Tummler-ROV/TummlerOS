@@ -6,6 +6,7 @@ import {
 import store from '@/store'
 import beacon from '@/store/beacon'
 import { castString } from '@/utils/helper_functions'
+import bag from '@/store/bag'
 
 @Module({
   dynamic: true,
@@ -20,6 +21,8 @@ class SettingsStore extends VuexModule {
   is_dark_theme: boolean = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
 
   is_pirate_mode = false
+
+  is_dev_mode_enabled = false
 
   last_version_update_notification_time = 0 // Start in 1970: https://www.youtube.com/watch?v=wwcKs5K1oWg
 
@@ -36,6 +39,15 @@ class SettingsStore extends VuexModule {
   @Mutation
   setPirateMode(value: boolean): void {
     this.is_pirate_mode = value
+    if (!value) {
+      this.is_dev_mode_enabled = false
+    }
+    SettingsStore.save()
+  }
+
+  @Mutation
+  setDevMode(value: boolean): void {
+    this.is_dev_mode_enabled = value && this.is_pirate_mode
     SettingsStore.save()
   }
 
@@ -58,19 +70,9 @@ class SettingsStore extends VuexModule {
   }
 
   // Secret mode for developers that know our secret.
-  // It's enabled when the vehicle name is 'Sir Francis Drake', one the most famous pirates,
-  // and the pirate mode toggled to be enabled.
+  // Enabled by 10 clicks on the build date and when the pirate mode is enabled
   get is_dev_mode(): boolean {
-    return beacon.vehicle_name === 'Sir Francis Drake' && this.is_pirate_mode
-  }
-
-  /**
-   * Get name of the settings variable on the system
-   * @param string name
-   * @returns string
-   */
-  private static settingsName(name: string): string {
-    return `bluerobotics-blueos-${name}`
+    return this.is_pirate_mode && this.is_dev_mode_enabled
   }
 
   /**
@@ -78,56 +80,43 @@ class SettingsStore extends VuexModule {
    * @param string name
    * @returns T
    */
-  static loadVariable<T>(name: string): T {
-    const storedVariable = window.localStorage.getItem(SettingsStore.settingsName(name))
-    const castedVariable = storedVariable === null ? null : castString(storedVariable)
-    return castedVariable as T
+  static async loadVariable<T>(name: string): Promise<T | null> {
+    const data = await bag.getData(`settings/${name}`)
+    return data as T ?? null
   }
 
   /**
    * Load all variables from settings system
    */
-  static load(): void {
-    Object.keys(SettingsStore.state).forEach((name: string) => {
-      const value = SettingsStore.loadVariable(name)
+  static async load(): Promise<void> {
+    const data = await bag.getData('settings')
+    if (!data) {
+      console.warn('No settings data found')
+      return
+    }
+    Object.entries(data).forEach(([name, value]) => {
       Vue.set(SettingsStore.state, name, value)
     })
   }
 
   /**
-   * Save a variable on the settings system
-   * @param string name
-   * @param T value
+   * Save all variables on the settings system
    */
-  static saveVariable<T>(name: string, value: T): void {
-    // eslint-disable-next-line
-    window.localStorage.setItem(SettingsStore.settingsName(name), JSON.stringify(value))
-  }
-
-  /**
-   * Save all variables on the settings sytem
-   */
-  static save(): void {
-    Object.entries(SettingsStore.state).forEach(([name, value]) => {
-      SettingsStore.saveVariable(name, value)
-    })
+  static async save(): Promise<void> {
+    await bag.setData('settings', SettingsStore.state)
   }
 
   /**
    * Start the instance and do the proper connections
    */
-  static start(): void {
-    window.onstorage = () => {
-      SettingsStore.load()
-    }
-
-    const settings_version: number = SettingsStore.loadVariable('settings_version')
+  static async start(): Promise<void> {
+    const settings_version = await SettingsStore.loadVariable<number>('settings_version')
     if (settings_version === null) {
-      SettingsStore.save()
+      await SettingsStore.save()
       return
     }
 
-    SettingsStore.load()
+    await SettingsStore.load()
   }
 }
 

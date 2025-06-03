@@ -11,6 +11,7 @@ export interface ServiceMetadata {
     sanitized_name?: string
     extra_query?: string
     avoid_iframes?: boolean
+    works_in_relative_paths?: boolean
 }
 
 export interface Service {
@@ -60,4 +61,11 @@ export interface SpeedTestResult {
     bytes_received: number
     share: string | null
     client: SpeedtestClient
+}
+
+export enum InternetConnectionState {
+  OFFLINE = 0,
+  UNKNOWN = 1,
+  LIMITED = 2,
+  ONLINE = 3,
 }

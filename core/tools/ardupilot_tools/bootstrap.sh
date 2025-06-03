@@ -3,54 +3,40 @@
 # Immediately exit on errors
 set -e
 
-## Download and install necessary tools to user binary folder with the correct permissions
-
-### Ardupilot's uploader is used to upload firmwares to serial boards
-COMMIT_HASH=tummler-board
-LOCAL_PATH_UPLOADER="$(python -m site --user-base)/bin/ardupilot_fw_uploader.py" || true
-mkdir -p "$(python -m site --user-base)/bin"
-REMOTE_URL_UPLOADER="https://raw.githubusercontent.com/Tummler-ROV/ardupilot/${COMMIT_HASH}/Tools/scripts/uploader.py"
-
-# Sudo command is not available on docker and the script is also used in different environments
-# The SUDO alias allow the usage of sudo when such command exists and also ignore if it doesn't
-SUDO="$(command -v sudo || echo '')"
-readonly SUDO
-if [ ! -f "$LOCAL_PATH_UPLOADER" ]; then
-  $SUDO wget "$REMOTE_URL_UPLOADER" -O "$LOCAL_PATH_UPLOADER"
-  $SUDO chmod +x "$LOCAL_PATH_UPLOADER"
-else
-  echo "File $LOCAL_PATH_UPLOADER already exists. Skipping download."
-fi
-## Download and install necessary modules to user-site folder
-
-# Check if pipenv is installed
-if command -v pipenv &> /dev/null; then
-    VERSION="$(python -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')"
-    USER_SITE_PACKAGES="$(pipenv --venv)/lib/python${VERSION}/site-packages/"
-else
-    # Fall back to the global Python site-packages directory if pipenv is not installed
-    USER_SITE_PACKAGES="$(python -m site --user-site)"
-fi
-mkdir -p $USER_SITE_PACKAGES
-
-### Ardupilot's decoder is used to parse and validate firmware ELF files
-COMMIT_HASH=tummler-board
-LOCAL_PATH_DECODER="${USER_SITE_PACKAGES}/ardupilot_fw_decoder.py" || true
-REMOTE_URL_DECODER="https://raw.githubusercontent.com/Tummler-ROV/ardupilot/${COMMIT_HASH}/Tools/scripts/firmware_version_decoder.py"
-if [ ! -f "$LOCAL_PATH_DECODER" ]; then
-    wget "$REMOTE_URL_DECODER" -O "$LOCAL_PATH_DECODER"
-else
-    echo "File $LOCAL_PATH_DECODER already exists. Skipping download."
+# Create the logs folder before ardupilot so we prevent a Filebrowser error if the user opens it
+# before arming the vehicle for the first time.
+if [ -z "$NOSUDO" ]; then
+    $SUDO mkdir -p /root/.config/ardupilot-manager/firmware/logs/
 fi
 
+# Download firmware defaults
+AUTOPILOT_DEFAULT_FIRMWARE_PATH="$HOME/blueos-files/ardupilot-manager/default"
 
-### Ardupilot's apj_tool is used to embed params into apj files
-COMMIT_HASH=tummler-board
-LOCAL_PATH_APJ_TOOL="$(python -m site --user-base)/bin/apj_tool.py" || true
-REMOTE_URL_APJ_TOOL="https://raw.githubusercontent.com/Tummler-ROV/ardupilot/${COMMIT_HASH}/Tools/scripts/apj_tool.py"
-if [ ! -f "$LOCAL_PATH_APJ_TOOL" ]; then
-    $SUDO wget "$REMOTE_URL_APJ_TOOL" -O "$LOCAL_PATH_APJ_TOOL"
-    $SUDO chmod +x "$LOCAL_PATH_APJ_TOOL"
-else
-    echo "File $LOCAL_PATH_APJ_TOOL already exists. Skipping download."
-fi
+download_if_not_exists() {
+    local url=$1
+    local dest=$2
+
+    if [ ! -f "$dest" ]; then
+        echo "Downloading $url to $dest"
+        mkdir -p "$(dirname "$dest")"
+        wget -q "$url" -O "$dest" && echo "Downloaded $dest" &
+    else
+        echo "File $dest already exists. Skipping download."
+    fi
+}
+
+download_if_not_exists "https://firmware.ardupilot.org/Sub/stable-4.5.3/navigator/ardusub" \
+                       "$AUTOPILOT_DEFAULT_FIRMWARE_PATH/ardupilot_navigator/ardusub"
+
+download_if_not_exists "https://firmware.ardupilot.org/Sub/stable-4.5.3/navigator64/ardusub" \
+                       "$AUTOPILOT_DEFAULT_FIRMWARE_PATH/ardupilot_navigator64/ardusub"
+
+download_if_not_exists "https://firmware.ardupilot.org/Sub/stable-4.5.3/Pixhawk1/ardusub.apj" \
+                       "$AUTOPILOT_DEFAULT_FIRMWARE_PATH/ardupilot_pixhawk1/ardusub.apj"
+
+download_if_not_exists "https://firmware.ardupilot.org/Sub/stable-4.5.3/Pixhawk4/ardusub.apj" \
+                       "$AUTOPILOT_DEFAULT_FIRMWARE_PATH/ardupilot_pixhawk4/ardusub.apj"
+
+# Wait for all background jobs to finish
+wait
+echo "All downloads completed."

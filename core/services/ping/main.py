@@ -1,11 +1,10 @@
-#!/usr/bin/env python3
+#! /usr/bin/env python3
 import argparse
 import asyncio
 import logging
 from typing import Any, List
 
 from commonwealth.utils.apis import GenericErrorHandlingRoute, PrettyJSONResponse
-from commonwealth.utils.general import limit_ram_usage
 from commonwealth.utils.logs import InterceptHandler, init_logger
 from fastapi import FastAPI, status
 from fastapi.responses import HTMLResponse
@@ -19,8 +18,6 @@ from portwatcher import PortWatcher
 from typedefs import PingDeviceDescriptorModel
 
 SERVICE_NAME = "ping"
-
-limit_ram_usage()
 
 logging.basicConfig(handlers=[InterceptHandler()], level=0)
 init_logger(SERVICE_NAME)

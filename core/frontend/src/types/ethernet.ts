@@ -1,6 +1,7 @@
 export enum AddressMode {
     client = 'client',
     server = 'server',
+    backupServer = 'backup_server',
     unmanaged = 'unmanaged',
 }
 
@@ -19,4 +20,5 @@ export interface EthernetInterface {
     name: string,
     addresses: InterfaceAddress[],
     info?: InterfaceInfo,
+    priority?: number,
 }

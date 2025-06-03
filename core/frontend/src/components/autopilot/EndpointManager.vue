@@ -9,7 +9,10 @@
         width="80%"
         class="my-4"
       />
-      <v-card class="align-center justify-center pa-6 d-block">
+      <v-card
+        v-if="available_routers.length > 1"
+        class="align-center justify-center pa-6 d-block"
+      >
         <v-card-title class="ma-0 pa-0 d-block">
           Mavlink Router
         </v-card-title>
@@ -24,9 +27,21 @@
           >
             <v-radio v-for="router in available_routers" :key="router" :label="router" :value="router" />
           </v-radio-group>
+          <v-alert
+            v-if="selected_router === 'MAVP2P'"
+            outline
+            text
+            dense
+            type="warning"
+          >
+            <p>
+              MAVP2P has been presenting issues and is not currently recommended.
+            </p>
+          </v-alert>
         </v-card-text>
       </v-card>
       <v-divider
+        v-if="available_routers.length > 1"
         width="80%"
         class="my-4"
       />
@@ -87,11 +102,11 @@
 import Vue from 'vue'
 
 import Notifier from '@/libs/notifier'
+import { OneMoreTime } from '@/one-more-time'
 import autopilot from '@/store/autopilot_manager'
 import { AutopilotEndpoint } from '@/types/autopilot'
 import { autopilot_service } from '@/types/frontend_services'
 import back_axios from '@/utils/api'
-import { callPeriodically, stopCallingPeriodically } from '@/utils/helper_functions'
 
 import SpinningLogo from '../common/SpinningLogo.vue'
 import { fetchAvailableEndpoints } from './AutopilotManagerUpdater'
@@ -113,6 +128,7 @@ export default Vue.extend({
       selected_router: '',
       available_routers: [] as string[],
       updating_router: false,
+      fetch_available_endpoints_task: new OneMoreTime({ delay: 5000, disposeWith: this }),
     }
   },
   computed: {
@@ -127,12 +143,9 @@ export default Vue.extend({
     },
   },
   mounted() {
-    callPeriodically(fetchAvailableEndpoints, 5000)
+    this.fetch_available_endpoints_task.setAction(fetchAvailableEndpoints)
     this.fetchAvailableRouters()
     this.fetchCurrentRouter()
-  },
-  beforeDestroy() {
-    stopCallingPeriodically(fetchAvailableEndpoints)
   },
   methods: {
     openCreationDialog(): void {

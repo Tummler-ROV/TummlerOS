@@ -16,6 +16,7 @@
         :color="hotspot_status ? 'success' : 'gray'"
         hide-details="auto"
         :loading="hotspot_status_loading"
+        :disabled="hotspot_supported === false"
         @click="toggleHotspot"
       >
         <v-icon>{{ hotspot_status ? 'mdi-access-point' : 'mdi-access-point-off' }}</v-icon>
@@ -41,7 +42,7 @@
       </v-btn>
     </v-app-bar>
 
-    <v-sheet>
+    <v-sheet v-if="!wifi_is_loading">
       <wifi-network-card
         v-if="current_network"
         connected
@@ -79,7 +80,8 @@
             flat
             class="text-body-1 text-center"
           >
-            No wifi networks available :(
+            No wifi networks available :( <br>
+            Rescanning...
           </v-card-text>
         </div>
         <div v-else>
@@ -89,6 +91,12 @@
           />
         </div>
       </v-sheet>
+    </v-sheet>
+    <v-sheet v-else>
+      <spinning-logo
+        size="30%"
+        subtitle="Waiting for wifi networks..."
+      />
     </v-sheet>
 
     <connection-dialog
@@ -177,6 +185,9 @@ export default Vue.extend({
     }
   },
   computed: {
+    wifi_is_loading(): boolean {
+      return wifi.is_loading
+    },
     wifi_status(): WifiStatus | null {
       return wifi.network_status
     },
@@ -200,7 +211,10 @@ export default Vue.extend({
       )
     },
     hotspot_status(): boolean | null {
-      return wifi.hotspot_status
+      return wifi.hotspot_status?.enabled ?? null
+    },
+    hotspot_supported(): boolean | null {
+      return wifi.hotspot_status?.supported ?? null
     },
     show_search(): boolean {
       if (!this.connectable_networks) {
@@ -250,15 +264,15 @@ export default Vue.extend({
       await back_axios({
         method: 'post',
         url: `${wifi.API_URL}/hotspot`,
-        params: { enable: !wifi.hotspot_status },
+        params: { enable: !this.hotspot_status },
         timeout: 20000,
       })
         .then(() => {
           notifier.pushSuccess('HOTSPOT_STATUS_TOGGLE_SUCCESS', 'Successfully toggled hotspot state.')
         })
         .catch((error) => {
-          wifi.setHotspotStatus(null)
           notifier.pushBackError('HOTSPOT_STATUS_TOGGLE_FAIL', error, true)
+          this.hotspot_status_loading = false
         })
     },
   },

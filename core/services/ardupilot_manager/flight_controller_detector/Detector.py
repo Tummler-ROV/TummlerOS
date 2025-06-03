@@ -1,76 +1,33 @@
+import asyncio
 from typing import List, Optional
 
 from commonwealth.utils.general import is_running_as_root
-from loguru import logger
 from serial.tools.list_ports_linux import SysFS, comports
-from smbus2 import SMBus
 
 from flight_controller_detector.board_identification import identifiers
+from flight_controller_detector.linux.detector import LinuxFlightControllerDetector
 from typedefs import FlightController, FlightControllerFlags, Platform
 
 
 class Detector:
-    @staticmethod
-    def detect_linux_board() -> Optional[FlightController]:
+    @classmethod
+    async def detect_linux_board(cls) -> Optional[FlightController]:
+        for _i in range(5):
+            board = cls._detect_linux_board()
+            if board:
+                return board
+            await asyncio.sleep(0.1)
+        return None
+
+    @classmethod
+    def _detect_linux_board(cls) -> Optional[FlightController]:
         """Returns Linux board if connected.
         Check for connection using the sensors on the I²C and SPI buses.
 
         Returns:
             Optional[FlightController]: Return FlightController if connected, None otherwise.
         """
-
-        def is_navigator_r5_connected() -> bool:
-            try:
-                bus = SMBus(1)
-                ADS1115_address = 0x48
-                bus.read_byte_data(ADS1115_address, 0)
-
-                AK09915_address = 0x0C
-                bus.read_byte_data(AK09915_address, 0)
-
-                BME280_address = 0x76
-                bus.read_byte_data(BME280_address, 0)
-
-                bus = SMBus(4)
-                PCA9685_address = 0x40
-                bus.read_byte_data(PCA9685_address, 0)
-                return True
-            except Exception:
-                return False
-
-        def is_argonot_r1_connected() -> bool:
-            try:
-                bus = SMBus(1)
-                swap_multiplexer_address = 0x77
-                bus.read_byte_data(swap_multiplexer_address, 0)
-                return True
-            except Exception:
-                return False
-
-        def is_tummler_r1_connected() -> bool:
-            try:
-                bus = SMBus(1)
-                QMC5883L_address = 0x0D
-                bus.read_byte_data(QMC5883L_address, 0)
-
-                STM32_address2 = 0x66
-                bus.read_byte_data(STM32_address2, 0)
-                return True
-            except Exception:
-                return False
-
-        logger.debug("Trying to detect Linux board.")
-        if is_navigator_r5_connected():
-            logger.debug("Navigator R5 detected.")
-            return FlightController(name="Navigator", manufacturer="Blue Robotics", platform=Platform.Navigator)
-        if is_argonot_r1_connected():
-            logger.debug("Argonot R1 detected.")
-            return FlightController(name="Argonot", manufacturer="SymbyTech", platform=Platform.Argonot)
-        if is_tummler_r1_connected():
-            logger.debug("Tummler Board R1 detected")
-            return FlightController(name="Tummler", manufacturer="Tummler ROV", platform=Platform.Tummler)
-        logger.debug("No Linux board detected.")
-        return None
+        return LinuxFlightControllerDetector.detect_boards()
 
     @staticmethod
     def is_serial_bootloader(port: SysFS) -> bool:
@@ -120,7 +77,7 @@ class Detector:
         return FlightController(name="SITL", manufacturer="ArduPilot Team", platform=Platform.SITL)
 
     @classmethod
-    def detect(cls, include_sitl: bool = True) -> List[FlightController]:
+    async def detect(cls, include_sitl: bool = True, include_manual: bool = True) -> List[FlightController]:
         """Return a list of available flight controllers
 
         Arguments:
@@ -133,7 +90,7 @@ class Detector:
         if not is_running_as_root():
             return available
 
-        linux_board = cls.detect_linux_board()
+        linux_board = await cls.detect_linux_board()
         if linux_board:
             available.append(linux_board)
 
@@ -141,5 +98,8 @@ class Detector:
 
         if include_sitl:
             available.append(Detector.detect_sitl())
+
+        if include_manual:
+            available.append(FlightController(name="Manual", manufacturer="Manual", platform=Platform.Manual))
 
         return available

@@ -1,6 +1,12 @@
 <template>
-  <div class="d-flex flex-column">
-    <div class="editor d-flex">
+  <div
+    class="d-flex flex-column"
+    :style="{ height: height }"
+  >
+    <div
+      v-if="!is_read_only"
+      class="editor d-flex"
+    >
       <v-btn
         v-tooltip="mode_tooltip"
         class="editor-control"
@@ -13,6 +19,7 @@
 
       <v-divider />
 
+      <slot name="controls" />
       <v-btn
         v-tooltip="save_tooltip"
         class="editor-control"
@@ -43,6 +50,14 @@ export default {
       type: Object,
       required: true,
     },
+    readOnly: {
+      type: Boolean,
+      default: false,
+    },
+    height: {
+      type: String,
+      default: '300px',
+    },
   },
   data() {
     return {
@@ -67,6 +82,16 @@ export default {
     save_tooltip() {
       return this.is_different ? 'Apply changes' : 'Saved'
     },
+    is_read_only() {
+      return this.readOnly
+    },
+    editor_code_mode() {
+      if (this.readOnly) {
+        return 'view'
+      }
+
+      return this.code_mode ? 'code' : 'tree'
+    },
   },
   watch: {
     value(json) {
@@ -74,6 +99,12 @@ export default {
         this.edited_code = json
         this.editor.set(json)
       }
+    },
+    edited_code(json) {
+      this.$emit('input', json)
+    },
+    readOnly() {
+      this.editor.setMode(this.read ? 'view' : this.editor_code_mode)
     },
   },
   mounted() {
@@ -83,7 +114,7 @@ export default {
           this.edited_code = this.editor.get()
         } catch { /* Json not valid */ }
       },
-      mode: this.code_mode ? 'code' : 'tree',
+      mode: this.editor_code_mode,
     }
     this.editor = new JSONEditor(this.$refs.jsonEditor, options, this.value)
     this.edited_code = this.value

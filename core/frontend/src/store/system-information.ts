@@ -7,20 +7,22 @@ import {
 } from 'vuex-module-decorators'
 
 import Notifier from '@/libs/notifier'
+import { OneMoreTime } from '@/one-more-time'
 import store from '@/store'
 import { system_information_service } from '@/types/frontend_services'
 import { KernelMessage } from '@/types/system-information/kernel'
+import { Model } from '@/types/system-information/model'
 import { Netstat } from '@/types/system-information/netstat'
 import { Platform } from '@/types/system-information/platform'
 import { Serial } from '@/types/system-information/serial'
 import {
   CPU, Disk, Info, Memory, Network, Process, System, Temperature,
 } from '@/types/system-information/system'
-import back_axios, { backend_offline_error } from '@/utils/api'
-import { callPeriodically } from '@/utils/helper_functions'
+import back_axios, { isBackendOffline } from '@/utils/api'
 
 export enum FetchType {
     KernelType = 'kernel_buffer',
+    ModelType = 'model',
     NetstatType = 'netstat',
     PlatformType = 'platform',
     SerialType = 'serial?udev=true',
@@ -47,6 +49,8 @@ class SystemInformationStore extends VuexModule {
 
   kernel_message: KernelMessage[] = []
 
+  model: Model | null = null
+
   netstat: Netstat | null = null
 
   platform: Platform | null = null
@@ -57,9 +61,22 @@ class SystemInformationStore extends VuexModule {
 
   serial: Serial | null = null
 
+  fetchPlatformTask = new OneMoreTime(
+    { delay: 5000 },
+  )
+
+  fetchSystemNetworkTask = new OneMoreTime(
+    { delay: 1000 },
+  )
+
   @Mutation
   appendKernelMessage(kernel_message: [KernelMessage]): void {
     this.kernel_message = this.kernel_message.concat(kernel_message)
+  }
+
+  @Mutation
+  updateModel(model: Model): void {
+    this.model = model
   }
 
   @Mutation
@@ -116,9 +133,20 @@ class SystemInformationStore extends VuexModule {
   }
 
   @Mutation
-  updateSystemNetwork(network: [Network]): void {
+  updateSystemNetwork(networks: [Network]): void {
     if (this.system) {
-      this.system.network = network
+      // derivate interface upload and download speeds from the previous values
+      const now = Date.now()
+      for(let network of networks) {
+        const previousNetwork = this.system.network.find(n => n.name === network.name)
+        const dt = (now - (previousNetwork?.last_update ?? 5)) / 1000
+        network.last_update = now
+        if (previousNetwork) {
+          network.download_speed = (network.total_received_B - previousNetwork.total_received_B) / dt
+          network.upload_speed = (network.total_transmitted_B - previousNetwork.total_transmitted_B) / dt
+        }
+      }
+      this.system.network = networks
     }
   }
 
@@ -149,6 +177,11 @@ class SystemInformationStore extends VuexModule {
   }
 
   @Action
+  async fetchModel(): Promise<void> {
+    await this.fetchSystemInformation(FetchType.ModelType)
+  }
+
+  @Action
   async fetchNetstat(): Promise<void> {
     await this.fetchSystemInformation(FetchType.NetstatType)
   }
@@ -166,6 +199,11 @@ class SystemInformationStore extends VuexModule {
   @Action
   async fetchSystem(): Promise<void> {
     await this.fetchSystemInformation(FetchType.SystemType)
+  }
+
+  @Action
+  async fetchNetworkInformation(): Promise<void> {
+    await this.fetchSystemInformation(FetchType.SystemNetworkType)
   }
 
   @Action
@@ -199,6 +237,9 @@ class SystemInformationStore extends VuexModule {
         switch (type) {
           case FetchType.KernelType:
             this.updateKernelMessage(response.data)
+            break
+          case FetchType.ModelType:
+            this.updateModel(response.data)
             break
           case FetchType.NetstatType:
             this.updateNetstat(response.data)
@@ -242,7 +283,7 @@ class SystemInformationStore extends VuexModule {
         }
       })
       .catch((error) => {
-        if (error === backend_offline_error) { return }
+        if (isBackendOffline(error)) { return }
         const message = `Could not fetch system information '${type}': ${error.message}`
         notifier.pushError('SYSTEM_FETCH_FAIL', message)
       })
@@ -254,7 +295,8 @@ export { SystemInformationStore }
 const system_information: SystemInformationStore = getModule(SystemInformationStore)
 
 system_information.fetchSystem()
-callPeriodically(system_information.fetchPlatform, 5000)
+system_information.fetchPlatformTask.setAction(system_information.fetchPlatform)
+system_information.fetchSystemNetworkTask.setAction(system_information.fetchNetworkInformation)
 
 // It appears that the store is incompatible with websockets or callbacks.
 // Right now the only way to have it working is to have the websocket definition outside the store

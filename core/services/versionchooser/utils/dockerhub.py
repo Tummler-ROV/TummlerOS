@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#! /usr/bin/env python3
 """
 Responsible for interacting with dockerhub
 adapted from https://github.com/al4/docker-registry-list
@@ -15,12 +15,20 @@ from loguru import logger
 
 def get_current_arch() -> str:
     """Maps platform.machine() outputs to docker architectures"""
-    arch_map = {"x86_64": "amd64", "aarch64": "arm", "armv7l": "arm"}  # TODO: differentiate arm64v8/ arm32v7
     machine = platform.machine()
-    arch = arch_map.get(machine, None)
-    if not arch:
-        raise RuntimeError(f"Unknown architecture! {machine}")
-    return arch
+
+    match machine:
+        case "armv7l":
+            return "arm"
+        case "x86_64" | "amd64":
+            return "amd64"
+        case "aarch64" | "arm64":
+            # catch the case of 64 bit kernel with 32bit userland on Pi 5
+            if platform.architecture()[0] == "32bit":
+                return "arm"
+            return "arm64"
+        case _:
+            raise RuntimeError(f"Unknown architecture! {machine}")
 
 
 @dataclass
@@ -91,7 +99,7 @@ class TagFetcher:
         self.last_token = await self._get_token(auth_url="https://auth.docker.io", image_name=repository)
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                f"{self.docker_url}/v2/repositories/{repository}/tags/?page_size=25&page=1&ordering=last_updated"
+                f"{self.docker_url}/v2/repositories/{repository}/tags/?page_size=200&page=1&ordering=last_updated"
             ) as resp:
                 if resp.status != 200:
                     warn(f"Error status {resp.status}")

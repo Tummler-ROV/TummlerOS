@@ -6,7 +6,8 @@
       ref="modelviewer"
       :src="model_override_path || model_path"
       :auto-rotate="autorotate"
-      camera-controls
+      :camera-controls="cameracontrols"
+      :orientation="orientation"
       shadow-intensity="0.3"
       interaction-prompt="none"
     >
@@ -105,6 +106,16 @@ export default Vue.extend({
   name: 'GenericViewer',
   components: { SpinningLogo },
   props: {
+    cameracontrols: {
+      type: Boolean,
+      required: false,
+      default: true,
+    },
+    orientation: {
+      type: String,
+      required: false,
+      default: '0deg 0deg 0deg',
+    },
     transparent: {
       type: Boolean,
       required: false,
@@ -113,7 +124,7 @@ export default Vue.extend({
     highlight: {
       type: Array<string>,
       required: false,
-      default: [],
+      default: () => [],
     },
     autorotate: {
       type: Boolean,
@@ -272,7 +283,7 @@ export default Vue.extend({
     async model_path() {
       this.reloadAnnotations()
       this.model_override_path = await this.checkModelOverrides()
-      this.override_annotations = await this.loadAnottationsOverride()
+      this.override_annotations = await this.loadAnnotationsOverride()
       this.forceRefreshAnnotations()
     },
     frame_type() {
@@ -309,7 +320,7 @@ export default Vue.extend({
       this.hideIrrelevantParts()
     })
     this.model_override_path = await this.checkModelOverrides()
-    this.override_annotations = await this.loadAnottationsOverride()
+    this.override_annotations = await this.loadAnnotationsOverride()
     this.reloadAnnotations()
   },
   methods: {
@@ -380,7 +391,7 @@ export default Vue.extend({
       }
       return undefined
     },
-    async loadAnottationsOverride(): Promise<Dictionary<HotspotConfiguration>> {
+    async loadAnnotationsOverride(): Promise<Dictionary<HotspotConfiguration>> {
       if (!this.model_override_path) {
         return {}
       }

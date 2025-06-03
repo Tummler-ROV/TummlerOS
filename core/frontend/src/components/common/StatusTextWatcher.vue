@@ -1,5 +1,5 @@
 <template>
-  <v-textarea auto-grow :value="all_messages" readonly />
+  <v-textarea auto-grow :value="all_messages" readonly disabled />
 </template>
 
 <script lang="ts">
@@ -11,14 +11,13 @@ export default {
   props: {
     filter: {
       type: RegExp,
-      default: '',
+      default: /.*/,
     },
   },
   data() {
     return {
       messages: [] as string[],
       listener: undefined as undefined | Listener,
-      filterRegex: /.*/,
     }
   },
   computed: {
@@ -26,22 +25,17 @@ export default {
       return this.messages.join('\n')
     },
   },
-  watch: {
-    filter(newFilter) {
-      this.filterRegex = new RegExp(newFilter)
-    },
-  },
   mounted() {
     this.listener = mavlink2rest.startListening('STATUSTEXT').setCallback((receivedMessage) => {
       const text = receivedMessage.message.text.join('')
-      if (this.messages?.[this.messages.length - 1] === text) {
+      if (this.messages?.last() === text) {
         return
       }
       if (new RegExp(this.filter).test(text)) {
         this.$emit('message', text)
+        this.messages.push(text)
       }
-      this.messages.push(text)
-    })
+    }).setFrequency(0)
   },
   beforeDestroy() {
     this.listener?.discard()

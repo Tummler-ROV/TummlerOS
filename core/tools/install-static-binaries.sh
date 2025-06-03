@@ -11,9 +11,9 @@ TOOLS=(
     linux2rest
     machineid
     mavlink2rest
-    mavlink_router
-    mavp2p
+    mavlink_server
     ttyd
+    zenoh
 )
 
 parallel --halt now,fail=1 'RUNNING_IN_CI=true /home/pi/tools/{}/bootstrap.sh' ::: "${TOOLS[@]}"
