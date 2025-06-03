@@ -219,7 +219,7 @@ export default Vue.extend({
       if (!boardname) {
         return false
       }
-      return ['Navigator', 'Navigator64', 'SITL'].includes(boardname)
+      return ['Tummler', 'Navigator', 'Navigator64', 'SITL'].includes(boardname)
     },
     is_external_board(): boolean {
       return autopilot.current_board?.name === 'Manual'
