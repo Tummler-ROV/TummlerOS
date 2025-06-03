@@ -1,8 +1,8 @@
-import platform
 from typing import Any, List
 
 from flight_controller_detector.linux.linux_boards import LinuxFlightController
 from typedefs import Platform, Serial
+
 
 class Tummler(LinuxFlightController):
     manufacturer = "Tummler ROV"
