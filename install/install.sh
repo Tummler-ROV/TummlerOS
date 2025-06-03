@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # Set desired version to be installed
+export DOCKER_USER=amirhz
 VERSION="${VERSION:-tummler-os-build-2}"
 GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-tummler-rov/TummlerOS}
 DOCKER_USER=${DOCKER_USER:-$(echo $GITHUB_REPOSITORY | cut -d'/' -f1 | tr '[:upper:]' '[:lower:]')}
