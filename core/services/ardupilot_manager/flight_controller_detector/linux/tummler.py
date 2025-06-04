@@ -22,6 +22,4 @@ class Tummler(LinuxFlightController):
         return [
             Serial(port="C", endpoint="/dev/ttyAMA0"),
             Serial(port="B", endpoint="/dev/ttyAMA2"),
-            Serial(port="E", endpoint="/dev/ttyAMA3"),
-            Serial(port="F", endpoint="/dev/ttyAMA4"),
         ]

@@ -20,6 +20,7 @@ logging.basicConfig(handlers=[InterceptHandler()], level=0)
 init_logger(SERVICE_NAME)
 
 BOOT_LOOP_DETECTOR = "/root/.config/.boot_loop_detector"
+TUMMLER_BOARD = True
 
 # Any change made in this DELTA_JSON dict should be also made
 # into /bootstrap/startup.json.default too!
@@ -712,7 +713,7 @@ def main() -> int:
             ]
         )
 
-    if host_cpu == CpuType.PI4:
+    if host_cpu == CpuType.PI4 and not TUMMLER_BOARD:
         patches_to_apply.extend([("navigator", update_navigator_overlays)])
 
     if host_cpu in [CpuType.PI4, CpuType.PI5]:
