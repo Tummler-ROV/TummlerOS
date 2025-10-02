@@ -505,8 +505,12 @@ class AutoPilotManager(metaclass=Singleton):
             """Checks if given process is using a Ardupilot's firmware file, for any known platform."""
             for platform in Platform:
                 firmware_path = self.firmware_manager.firmware_path(platform)
-                if str(firmware_path) in " ".join(process.cmdline()):
-                    return True
+                try:
+                    if str(firmware_path) in " ".join(process.cmdline()):
+                        return True
+                except psutil.NoSuchProcess:
+                    # process may have died before we could call cmdline()
+                    pass
             return False
 
         return list(filter(is_ardupilot_process, psutil.process_iter()))
@@ -585,6 +589,7 @@ class AutoPilotManager(metaclass=Singleton):
 
             if flight_controller.platform.type == PlatformType.Linux:
                 assert isinstance(flight_controller, LinuxFlightController)
+                flight_controller.setup()
                 await self.start_linux_board(flight_controller)
             elif flight_controller.platform.type == PlatformType.Serial:
                 await self.start_serial(flight_controller)

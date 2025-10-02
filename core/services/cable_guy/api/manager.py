@@ -3,7 +3,7 @@ import errno
 import re
 import subprocess
 import time
-from ipaddress import ip_network
+from ipaddress import ip_network, IPv4Address
 from socket import AddressFamily
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
@@ -11,7 +11,7 @@ import psutil
 from commonwealth.settings.manager import PydanticManager
 from commonwealth.utils.decorators import temporary_cache
 from commonwealth.utils.DHCPDiscovery import DHCPDiscoveryError, discover_dhcp_servers
-from commonwealth.utils.DHCPServerManager import Dnsmasq as DHCPServerManager
+from commonwealth.utils.DHCPServerManager import DHCPServerDetails, Dnsmasq as DHCPServerManager, DHCPServerLease
 from loguru import logger
 from pyroute2 import IW, NDB, IPRoute
 from pyroute2.netlink.exceptions import NetlinkError
@@ -342,7 +342,7 @@ class EthernetManager:
             )
 
         new_address = InterfaceAddress(ip=ip, mode=mode)
-        saved_interface.addresses = [address for address in saved_interface.addresses if address.ip != ip]
+        saved_interface.addresses = [address for address in saved_interface.addresses if str(address.ip) != str(ip)]
         saved_interface.addresses.append(new_address)
         # remove duplicates. this will prevent multiple client entries on the same interface
         saved_interface.addresses = list(set(saved_interface.addresses))
@@ -359,10 +359,9 @@ class EthernetManager:
         logger.info(f"Deleting IP {ip_address} from interface {interface_name}.")
         static_ip = self.is_static_ip(ip_address)
         try:
-            if (
-                self._is_dhcp_server_running_on_interface(interface_name)
-                and self._dhcp_server_on_interface(interface_name).ipv4_gateway == ip_address
-            ):
+            if self._is_dhcp_server_running_on_interface(interface_name) and str(
+                self._dhcp_server_on_interface(interface_name).ipv4_gateway
+            ) == str(ip_address):
                 self.remove_dhcp_server_from_interface(interface_name)
             self.network_handler.remove_static_ip(interface_name, ip_address)
         except Exception as error:
@@ -374,7 +373,9 @@ class EthernetManager:
             logger.error(f"Interface {interface_name} is not managed by Cable Guy. Not deleting IP {ip_address}.")
             return
 
-        saved_interface.addresses = [address for address in saved_interface.addresses if address.ip != ip_address]
+        saved_interface.addresses = [
+            address for address in saved_interface.addresses if str(address.ip) != str(ip_address)
+        ]
         if not static_ip:
             saved_interface.addresses = [
                 address for address in saved_interface.addresses if address.mode != AddressMode.Client
@@ -382,8 +383,17 @@ class EthernetManager:
 
         self._update_interface_settings(interface_name, saved_interface)
 
-    def get_interface_by_name(self, name: str) -> NetworkInterface:
-        for interface in self.get_ethernet_interfaces():
+    def get_interface_by_name(self, name: str, include_dhcp_markers: bool = False) -> NetworkInterface:
+        """Get interface by name.
+
+        Args:
+            name (str): Interface name
+            include_dhcp_markers (bool, optional): Include DHCP markers. Defaults to False
+
+        Returns:
+            NetworkInterface: Interface object
+        """
+        for interface in self.get_ethernet_interfaces(include_dhcp_markers):
             if interface.name == name:
                 return interface
         raise ValueError(f"No interface with name '{name}' is present.")
@@ -392,11 +402,13 @@ class EthernetManager:
         return next((i for i in self._settings.content if i.name == name), None)
 
     # pylint: disable=too-many-locals
-    def get_interfaces(self, filter_wifi: bool = False) -> List[NetworkInterface]:
+    def get_interfaces(self, filter_wifi: bool = False, include_dhcp_markers: bool = False) -> List[NetworkInterface]:
         """Get interfaces information
 
         Args:
             filter_wifi (boolean, optional): Enable wifi interface filtering
+            include_dhcp_markers (boolean, optional): DHCP marker is the IP 0.0.0.0 AddressMode.Client, used to
+            inform cable guy that a dynamic IP should be acquired if available.
 
         Returns:
             List of NetworkInterface instances available
@@ -421,16 +433,29 @@ class EthernetManager:
                 is_static_ip = self.is_static_ip(ip)
 
                 # Populate our output item
-                if (
-                    self._is_dhcp_server_running_on_interface(interface)
-                    and self._dhcp_server_on_interface(interface).ipv4_gateway == ip
-                ):
+                if self._is_dhcp_server_running_on_interface(interface) and str(
+                    self._dhcp_server_on_interface(interface).ipv4_gateway
+                ) == str(ip):
                     mode = AddressMode.Server
                     if self._dhcp_server_on_interface(interface).is_backup_server:
                         mode = AddressMode.BackupServer
                 else:
                     mode = AddressMode.Unmanaged if is_static_ip and valid_ip else AddressMode.Client
                 valid_addresses.append(InterfaceAddress(ip=ip, mode=mode))
+            # Check if there is a 0.0.0.0 AddressMode.Client in current interface on self._settings.content and if not in valid_addresses add it
+            interface_settings = self.get_saved_interface_by_name(interface)
+            if (
+                include_dhcp_markers
+                and interface_settings
+                and any(
+                    str(address.ip) == "0.0.0.0" and address.mode == AddressMode.Client
+                    for address in interface_settings.addresses
+                )
+                and not any(
+                    str(address.ip) == "0.0.0.0" and address.mode == AddressMode.Client for address in valid_addresses
+                )
+            ):
+                valid_addresses.append(InterfaceAddress(ip="0.0.0.0", mode=AddressMode.Client))
             info = self.get_interface_info(interface)
             saved_interface = self.get_saved_interface_by_name(interface)
             # Get priority from saved interface or from current interface metrics, defaulting to None if neither exists
@@ -453,13 +478,17 @@ class EthernetManager:
 
         return result
 
-    def get_ethernet_interfaces(self) -> List[NetworkInterface]:
+    def get_ethernet_interfaces(self, include_dhcp_markers: bool = False) -> List[NetworkInterface]:
         """Get ethernet interfaces information
+
+        Args:
+            include_dhcp_markers (boolean, optional): DHCP marker is the IP 0.0.0.0 AddressMode.Client, used to
+            inform cable guy that a dynamic IP should be acquired if available.
 
         Returns:
             List of NetworkInterface instances available
         """
-        return self.get_interfaces(filter_wifi=True)
+        return self.get_interfaces(filter_wifi=True, include_dhcp_markers=include_dhcp_markers)
 
     def get_interface_ndb(self, interface_name: str) -> Any:
         """Get interface NDB information for interface
@@ -634,7 +663,7 @@ class EthernetManager:
             raise
 
         # Update settings
-        current_interface = self.get_interface_by_name(interface_name)
+        current_interface = self.get_interface_by_name(interface_name, include_dhcp_markers=True)
         for current_route in current_interface.routes:
             if current_route.destination_parsed == route.destination_parsed and current_route.gateway == route.gateway:
                 current_route.managed = route.managed
@@ -718,13 +747,13 @@ class EthernetManager:
 
     def _is_ip_on_interface(self, interface_name: str, ip_address: str) -> bool:
         interface = self.get_interface_by_name(interface_name)
-        return any(True for address in interface.addresses if address.ip == ip_address)
+        return any(True for address in interface.addresses if str(address.ip) == str(ip_address))
 
     def _is_ip_saved_on_interface(self, interface_name: str, ip_address: str) -> bool:
         interface = self.get_saved_interface_by_name(interface_name)
         if interface is None:
             return False
-        return any(True for address in interface.addresses if address.ip == ip_address)
+        return any(True for address in interface.addresses if str(address.ip) == str(ip_address))
 
     def _dhcp_server_on_interface(self, interface_name: str) -> DHCPServerManager:
         try:
@@ -783,7 +812,7 @@ class EthernetManager:
         if self._is_dhcp_server_running_on_interface(interface_name):
             dhcp_on_interface = self._dhcp_server_on_interface(interface_name)
             if (
-                dhcp_on_interface.ipv4_gateway == ipv4_gateway
+                str(dhcp_on_interface.ipv4_gateway) == str(ipv4_gateway)
                 and dhcp_on_interface.is_backup_server == backup
                 and self._is_ip_on_interface(interface_name, ipv4_gateway)
             ):
@@ -800,7 +829,7 @@ class EthernetManager:
             interface_name, ipv4_gateway, mode=AddressMode.Server if not backup else AddressMode.BackupServer
         )
         logger.info(f"Adding DHCP server with gateway '{ipv4_gateway}' to interface '{interface_name}'.")
-        self._dhcp_servers.append(DHCPServerManager(interface_name, ipv4_gateway, backup=backup))
+        self._dhcp_servers.append(DHCPServerManager(interface_name, IPv4Address(ipv4_gateway), backup=backup))
 
         saved_interface = self.get_saved_interface_by_name(interface_name)
         if saved_interface is None:
@@ -905,3 +934,19 @@ class EthernetManager:
             except Exception as error:
                 logger.error(f"Error in watchdog: {error}")
                 await asyncio.sleep(5)
+
+    def _get_dhcp_server_attribute(
+        self, interface_name: Optional[str] = None, attribute: str = "leases"
+    ) -> Dict[str, Any]:
+        if interface_name:
+            try:
+                return {interface_name: getattr(self._dhcp_server_on_interface(interface_name), attribute)}
+            except ValueError:
+                return {}
+        return {dhcp_server.interface: getattr(dhcp_server, attribute) for dhcp_server in self._dhcp_servers}
+
+    def get_dhcp_server_leases(self, interface_name: Optional[str] = None) -> Dict[str, List[DHCPServerLease]]:
+        return self._get_dhcp_server_attribute(interface_name, "leases")
+
+    def get_dhcp_server_details(self, interface_name: Optional[str] = None) -> Dict[str, DHCPServerDetails]:
+        return self._get_dhcp_server_attribute(interface_name, "details")

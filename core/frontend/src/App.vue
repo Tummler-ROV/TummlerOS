@@ -73,6 +73,7 @@
         <theme-tray-menu />
         <system-checker-tray-menu />
         <vehicle-reboot-required-tray-menu />
+        <on-board-computer-required-tray-menu />
         <pirate-mode-tray-menu />
         <internet-tray-menu />
         <wifi-tray-menu />
@@ -389,8 +390,14 @@
 <script lang="ts">
 import Vue, { defineAsyncComponent } from 'vue'
 
+<<<<<<< HEAD
 import tummler_white from '@/assets/img/tummler-logo-white.svg'
 import tummler_yellow from '@/assets/img/tummler-logo-yellow.svg'
+=======
+import blueos_blue from '@/assets/img/blueos-logo-blue.svg'
+import blueos_white from '@/assets/img/blueos-logo-white.svg'
+import consoleLogger from '@/libs/console-logger'
+>>>>>>> 1.5.0-beta.14
 import settings from '@/libs/settings'
 import helper from '@/store/helper'
 import wifi from '@/store/wifi'
@@ -403,6 +410,7 @@ import Alerter from './components/app/Alerter.vue'
 import BackendStatusChecker from './components/app/BackendStatusChecker.vue'
 import InternetTrayMenu from './components/app/InternetTrayMenu.vue'
 import NewVersionNotificator from './components/app/NewVersionNotificator.vue'
+import OnBoardComputerRequiredTrayMenu from './components/app/OnBoardComputerRequiredTrayMenu.vue'
 import PiradeModeTrayMenu from './components/app/PirateModeTrayMenu.vue'
 import PowerMenu from './components/app/PowerMenu.vue'
 import ReportMenu from './components/app/ReportMenu.vue'
@@ -453,6 +461,7 @@ export default Vue.extend({
     'new-version-notificator': NewVersionNotificator,
     SystemCheckerTrayMenu,
     VehicleRebootRequiredTrayMenu,
+    OnBoardComputerRequiredTrayMenu,
     Wizard: defineAsyncComponent(() => import('@/components/wizard/Wizard.vue')),
   },
 
@@ -740,6 +749,13 @@ export default Vue.extend({
     })
     this.bootstrap_version = await VCU.loadBootstrapCurrentVersion()
   },
+
+  beforeDestroy() {
+    consoleLogger.cleanup().catch((error) => {
+      console.error('Failed to cleanup console logger:', error)
+    })
+  },
+
   methods: {
     addExtraQuery(url: string, extra_queries?: string) {
       if (!extra_queries) {

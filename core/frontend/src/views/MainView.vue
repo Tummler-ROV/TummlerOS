@@ -54,6 +54,7 @@
                 >
                   <v-card-title
                     class="text-subtitle-2 font-weight-bold"
+                    style="word-break: break-word;"
                     v-text="title"
                   />
                   <v-avatar
@@ -136,7 +137,6 @@ export default Vue.extend({
             h: 1.2,
           },
           style: {
-            transform: 'translateY(-45%)',
             maxHeight: '300px',
           },
           props: {
@@ -190,7 +190,7 @@ export default Vue.extend({
       const msg = mavlink_store_get(mavlink, 'ATTITUDE.messageData.message') as
         { roll: number; pitch: number; yaw: number } | undefined
       if (!msg) return '0deg 0deg 0deg'
-      return `${msg.roll}rad ${msg.pitch}rad ${msg.yaw}rad`
+      return `${msg.roll}rad ${-msg.pitch}rad ${-msg.yaw}rad`
     },
   },
   mounted() {

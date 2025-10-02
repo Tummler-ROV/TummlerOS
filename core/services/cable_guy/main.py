@@ -3,11 +3,13 @@ import asyncio
 import logging
 import os
 import sys
-from typing import Any, List
+from typing import Any, Dict, List, Optional
 
 from commonwealth.utils.apis import GenericErrorHandlingRoute, PrettyJSONResponse
 from commonwealth.utils.decorators import temporary_cache
 from commonwealth.utils.logs import InterceptHandler, init_logger
+from commonwealth.utils.sentry_config import init_sentry_async
+from commonwealth.utils.DHCPServerManager import DHCPServerDetails, DHCPServerLease
 from fastapi import Body, FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi_versioning import VersionedFastAPI, version
@@ -79,6 +81,20 @@ def delete_address(interface_name: str, ip_address: str) -> Any:
     """REST API endpoint to delete an IP address from an ethernet interface."""
     manager.remove_ip(interface_name, ip_address)
     manager.save()
+
+
+@app.get("/dhcp/details/{interface_name}", summary="Get all DHCP leases.")
+@version(1, 0)
+def get_dhcp_server_details(interface_name: Optional[str] = None) -> Dict[str, DHCPServerDetails]:
+    """REST API endpoint to get the DHCP server details."""
+    return manager.get_dhcp_server_details(interface_name)
+
+
+@app.get("/dhcp/leases/{interface_name}", summary="Get all DHCP leases.")
+@version(1, 0)
+def get_dhcp_server_leases(interface_name: Optional[str] = None) -> Dict[str, List[DHCPServerLease]]:
+    """REST API endpoint to get the DHCP leases."""
+    return manager.get_dhcp_server_leases(interface_name)
 
 
 @app.post("/dhcp", summary="Add local DHCP server to interface.")
@@ -162,6 +178,18 @@ async def root() -> HTMLResponse:
     return HTMLResponse(content=html_content, status_code=200)
 
 
+async def main() -> None:
+    await init_sentry_async(SERVICE_NAME)
+
+    config = Config(app=app, host="0.0.0.0", port=9090, log_config=None)
+    server = Server(config)
+
+    await manager.initialize()
+    asyncio.create_task(manager.watchdog())
+
+    await server.serve()
+
+
 if __name__ == "__main__":
     if os.geteuid() != 0:
         logger.error(
@@ -169,11 +197,4 @@ if __name__ == "__main__":
         )
         sys.exit(1)
 
-    loop = asyncio.new_event_loop()
-
-    # Running uvicorn with log disabled so loguru can handle it
-    config = Config(app=app, loop=loop, host="0.0.0.0", port=9090, log_config=None)
-    server = Server(config)
-    loop.run_until_complete(manager.initialize())
-    loop.create_task(manager.watchdog())
-    loop.run_until_complete(server.serve())
+    asyncio.run(main())

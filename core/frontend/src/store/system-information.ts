@@ -69,6 +69,10 @@ class SystemInformationStore extends VuexModule {
     { delay: 1000 },
   )
 
+  fetchTemperatureTask = new OneMoreTime(
+    { delay: 2000 },
+  )
+
   @Mutation
   appendKernelMessage(kernel_message: [KernelMessage]): void {
     this.kernel_message = this.kernel_message.concat(kernel_message)
@@ -114,6 +118,28 @@ class SystemInformationStore extends VuexModule {
   @Mutation
   updateSystemDisk(disk: [Disk]): void {
     if (this.system) {
+      const now = Date.now()
+      
+      for (const currentDisk of disk) {
+        const previousDisk = this.system.disk?.find(d => d.name === currentDisk.name)
+        
+        if (currentDisk.write_rate_Bps === undefined) {
+          currentDisk.write_rate_Bps = previousDisk?.write_rate_Bps ?? 0
+        }
+
+        currentDisk.last_update = now
+        
+        if (previousDisk && previousDisk.last_update) {
+          const timeDelta = (now - previousDisk.last_update) / 1000
+          const currentUsed = currentDisk.total_space_B - currentDisk.available_space_B
+          const previousUsed = previousDisk.total_space_B - previousDisk.available_space_B
+          const disk_delta = currentUsed - previousUsed
+          
+          if (disk_delta !== 0) {
+            currentDisk.write_rate_Bps = disk_delta / timeDelta
+          }
+        }
+      }
       this.system.disk = disk
     }
   }
@@ -207,6 +233,11 @@ class SystemInformationStore extends VuexModule {
   }
 
   @Action
+  async fetchTemperatureInformation(): Promise<void> {
+    await this.fetchSystemInformation(FetchType.SystemTemperatureType)
+  }
+
+  @Action
   async fetchSystemInformation(type: FetchType): Promise<void> {
     // Do not fetch system specific information if system is not populate yet
     // system type does not have optional fields, they need to be populate before fetching it
@@ -297,6 +328,7 @@ const system_information: SystemInformationStore = getModule(SystemInformationSt
 system_information.fetchSystem()
 system_information.fetchPlatformTask.setAction(system_information.fetchPlatform)
 system_information.fetchSystemNetworkTask.setAction(system_information.fetchNetworkInformation)
+system_information.fetchTemperatureTask.setAction(system_information.fetchTemperatureInformation)
 
 // It appears that the store is incompatible with websockets or callbacks.
 // Right now the only way to have it working is to have the websocket definition outside the store

@@ -56,9 +56,30 @@ export default defineConfig(({ command, mode }) => {
         authToken: process.env.SENTRY_AUTH_TOKEN,
         org: "blue-robotics-c7",
         project: "blueos",
-      })
+      }),
+      // Fix Draco imports in dev server
+      {
+        name: 'draco-dev-fix',
+        apply: 'serve',
+        configureServer(server) {
+          server.middlewares.use((req, res, next) => {
+            if (req.url?.includes('/node_modules/three/examples/jsm/libs/draco/')) {
+              const fs = require('fs')
+              const filePath = path.join(__dirname, req.url)
+              if (fs.existsSync(filePath)) {
+                const ext = path.extname(req.url)
+                if (ext === '.wasm') res.setHeader('Content-Type', 'application/wasm')
+                else if (ext === '.js') res.setHeader('Content-Type', 'application/javascript')
+                res.end(fs.readFileSync(filePath))
+                return
+              }
+            }
+            next()
+          })
+        }
+      }
     ],
-    assetsInclude: ['**/*.gif', '**/*.glb', '**/*.png', '**/*.svg', '**/assets/ArduPilot-Parameter-Repository**.json'],
+    assetsInclude: ['**/*.gif', '**/*.glb', '**/*.png', '**/*.svg', '**/assets/ArduPilot-Parameter-Repository**.json', '**/*.msg', "**/three/examples/jsm/libs/draco/*"],
     resolve: {
       extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json', '.vue'],
       alias: {
@@ -72,14 +93,36 @@ export default defineConfig(({ command, mode }) => {
         input: {
           main: path.resolve(__dirname, 'index.html'),
         },
+        output: {
+          assetFileNames: (assetInfo) => {
+            // List of file patterns to excluded from hashing
+            const noHashPatterns = [
+              /ArduPilot-Parameter-Repository.*\.json$/,
+              /three\/examples\/jsm\/libs\/draco\//
+            ];
+
+            if (assetInfo.name) {
+              if (noHashPatterns.some(pattern => pattern.test(assetInfo.name))) {
+                return `assets/[name][extname]`;
+              }
+            }
+            return `assets/[name]-[hash][extname]`;
+          }
+        }
       },
     },
     define: {
       'process.env': {},
       __APP_ENV__: env.APP_ENV,
     },
+    optimizeDeps: {
+      exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util']
+    },
     server: {
       port: 8080,
+      fs: {
+        allow: ['..', './node_modules']
+      },
       proxy: {
         '^/status': {
           target: SERVER_ADDRESS,
@@ -174,6 +217,7 @@ export default defineConfig(({ command, mode }) => {
         },
         '^/version-chooser': {
           target: SERVER_ADDRESS,
+          changeOrigin: true,
           onProxyRes: (proxyRes, request, response) => {
             proxyRes.on('data', (data) => {
               response.write(data)

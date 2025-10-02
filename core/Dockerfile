@@ -23,7 +23,7 @@ set -e
 
 EOF
 
-FROM bluerobotics/blueos-base:0.2.1 AS base
+FROM bluerobotics/blueos-base:0.2.2 AS base
 
 # Download binaries
 FROM base AS download-binaries
@@ -52,7 +52,7 @@ COPY ./tools /home/pi/tools
 
 # Virtual environment creation and packages installation
 WORKDIR /home/pi
-RUN uv venv && uv sync --frozen
+RUN uv venv && uv sync --frozen --no-default-groups
 
 # Post install scripts
 ENV VIRTUAL_ENV=/home/pi/.venv
@@ -72,12 +72,6 @@ ARG GIT_DESCRIBE_TAGS
 ENV GIT_DESCRIBE_TAGS=${GIT_DESCRIBE_TAGS:-0.0.0-0-g00000000}
 RUN <<-EOF
 set -e
-
-    if [ -z "$GIT_DESCRIBE_TAGS" ]; then
-        echo "GIT_DESCRIBE_TAGS argument not provided."
-        echo "Use: --build-arg GIT_DESCRIBE_TAGS=\$(git describe --tags --long --always)"
-        exit 1
-    fi
 
     if [[ ! $GIT_DESCRIBE_TAGS =~ -[0-9]+-g[a-f0-9]{8}$ ]]; then
         echo "Invalid format: $GIT_DESCRIBE_TAGS (E.g: <TAG>-<COMMIT_NUMBER>-g<SHORT_HASH>)"
@@ -109,9 +103,12 @@ COPY run-service.sh /usr/bin/run-service
 # Copy binaries and necessary folders from download-binaries to this stage
 COPY --from=download-binaries \
     /usr/bin/blueos_startup_update.py \
+    /usr/bin/blueos-recorder \
     /usr/bin/bridges \
+    /usr/bin/linux2rest \
     /usr/bin/machineid-cli \
     /usr/bin/mavlink2rest \
+    /usr/bin/mavlink-camera-manager \
     /usr/bin/mavlink-server \
     /usr/bin/zenoh \
     /usr/bin/ttyd \

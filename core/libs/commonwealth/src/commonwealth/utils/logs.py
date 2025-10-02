@@ -1,11 +1,16 @@
+import json
 import logging
 from datetime import datetime, timezone
 from logging import LogRecord
 from pathlib import Path
 from types import FrameType
-from typing import Any, Optional, TextIO, Union
+from typing import Any, Optional, TextIO, TYPE_CHECKING, Union, Callable
 
+import zenoh
 from loguru import logger
+
+if TYPE_CHECKING:
+    from loguru import Message
 
 
 class LogRotator:
@@ -39,15 +44,18 @@ class InterceptHandler(logging.Handler):
         logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 
-def get_new_log_path(service_name: str) -> Path:
-    """Get default Path to a new log for a given service."""
-    # Prevent problematic service names
+def validate_service_name(service_name: str) -> None:
+    """Validate the service name."""
     if service_name == "":
         raise ValueError("Service name cannot be empty")
     if "/" in service_name:
         raise ValueError("Service name cannot contain forward slash character ('/').")
     if "." in service_name:
         raise ValueError("Service name cannot contain extension-separation character ('.').")
+
+
+def get_new_log_path(service_name: str) -> Path:
+    """Get default Path to a new log for a given service."""
 
     # Create folder for service logs if it doesn't exist yet
     default_log_folder = Path("/var/logs/blueos/services")
@@ -61,7 +69,9 @@ def get_new_log_path(service_name: str) -> Path:
 
 def init_logger(service_name: str) -> None:
     try:
+        validate_service_name(service_name)
         logger.add(get_new_log_path(service_name), rotation="10 MB")
+        logger.add(create_log_sink(service_name), serialize=True)
     except Exception as e:
         print(f"Error: unable to set logging path: {e}")
 
@@ -74,3 +84,62 @@ def stack_trace_message(error: BaseException) -> str:
         message = f"{message} {sub_error}"
         sub_error = sub_error.__cause__
     return message
+
+
+def create_log_sink(service_name: str) -> Callable[["Message"], None]:
+    """Create a loguru sink that publishes logs to a zenoh topic.
+
+    Args:
+        service_name: The name of the service to use in the topic path
+
+    Returns:
+        A function that can be used as a loguru sink
+    """
+    zenoh_config = zenoh.Config()
+    zenoh_config.insert_json5("adminspace", json.dumps({"enabled": True}))
+    zenoh_config.insert_json5("metadata", json.dumps({"name": service_name}))
+    zenoh_config.insert_json5("mode", json.dumps("client"))
+    zenoh_config.insert_json5("connect/endpoints", json.dumps(["tcp/127.0.0.1:7447"]))
+    session = zenoh.open(zenoh_config)
+    topic = f"services/{service_name}/log"
+
+    def sink(message: "Message") -> None:
+        # Transform the message to the Foxglove log format
+        # https://docs.foxglove.dev/docs/visualization/message-schemas/log
+
+        # fmt: off
+        LEVEL_MAP = {
+            "UNKNOWN": 0, # Foxglove value
+            "TRACE": 0,
+            "DEBUG": 1,
+            "INFO": 2, # Foxglove value
+            "SUCCESS": 2,
+            "WARNING": 3,
+            "ERROR": 4,
+            "FATAL": 5, # Foxglove value
+            "CRITICAL": 5,
+        }
+
+        record = message.record
+        total_ns = record["time"].timestamp() * 1e9
+
+        foxglove_log = {
+            "timestamp": {
+                "sec": total_ns // 1_000_000_000,
+                "nsec": total_ns % 1_000_000_000
+            },
+            "level": LEVEL_MAP.get(record["level"].name.upper(), LEVEL_MAP["UNKNOWN"]),
+            "message": record["message"],
+            "name": record["name"],
+            "file": record["file"].name,
+            "line": record["line"],
+        }
+
+        session.put(
+            topic,
+            json.dumps(foxglove_log),
+            encoding=zenoh.Encoding.APPLICATION_JSON.with_schema("foxglove.Log"),
+        )
+        # fmt: on
+
+    return sink

@@ -2,6 +2,7 @@
 
 [![Test, Build and Deploy Images](https://github.com/bluerobotics/BlueOS/actions/workflows/test-and-deploy.yml/badge.svg)](https://github.com/bluerobotics/BlueOS/actions/workflows/test-and-deploy.yml)
 ![Downloads](https://img.shields.io/github/downloads/bluerobotics/blueos/total?label=Downloads)
+[![Discord](https://img.shields.io/discord/1135646343776456765?label=Discord)](https://discord.gg/y9JNPDMsFv)
 
 [![Latest Stable](https://img.shields.io/github/v/release/bluerobotics/blueos.svg?label=Latest%20Stable)
 ![Date](https://img.shields.io/github/release-date/bluerobotics/blueos?label=Date)](https://github.com/bluerobotics/blueos/releases/latest)
@@ -25,6 +26,7 @@ BlueOS is a modular, robust, and efficient platform for managing a vehicle or ro
 ## Quick Links ⚡
 
 - [Official documentation](https://blueos.cloud/docs/)
+- [Installation](https://blueos.cloud/docs/stable/usage/installation/)
 - [Development documentation](https://blueos.cloud/docs/latest/development/overview/)
 - [Contributions](https://blueos.cloud/docs/latest/development/core/#contributions)
 - [Code of Conduct](./CoC.md)
@@ -40,7 +42,7 @@ The development of BlueOS is driven by the following core principles:
 * **Make complex tasks simpler** and improve ease of use by reusing design patterns from other applications (based on the [material UI guidelines](https://material.io/design/guidelines-overview))
 * **Advanced error handling and detection**, making any problems clear to the user and developers, along with how to fix them
 * **Simplify development**, providing full access to our [services API](https://blueos.cloud/docs/blueos/1.1/development/core/#services) and [modular development model](https://blueos.cloud/docs/blueos/1.1/development/overview/)
-* **Portable and flexible**, you should be able to run on a Raspberry Pi 3/4 or any SBC with Linux operating system, contributions are welcomed
+* **Portable and flexible**, you should be able to run on a Raspberry Pi 3/4/5 or any SBC with Linux operating system, contributions are welcomed
 * **Highly functional with low CPU usage**, the entire system is built to run efficiently
 * **Developed on solid foundations**, critical parts or intensive workforce services are designed using the most advanced languages and features available for stability
 
@@ -68,7 +70,7 @@ ArduRover is an open-source, uncrewed boat platform. Whether you are commanding 
 
 ### **Submarines (ArduSub)**
 
-ArduSub is the go-to control system for remotely operated underwater vehicles (ROVs) 🐟. BlueOS offers seamless integration with ArduSub, enabling efficient management and operation of underwater vehicles. 
+ArduSub is the go-to control system for remotely operated underwater vehicles (ROVs) 🐟. BlueOS offers seamless integration with ArduSub, enabling efficient management and operation of underwater vehicles.
 
 [BlueROV2](https://bluerobotics.com/store/rov/bluerov2/) is supported out of the box.
 
@@ -84,13 +86,13 @@ BlueOS provides generic support for a wide variety of terrestrial, aerial, and m
 
 BlueOS is designed to perform optimally across a wide range of systems. Our latest releases are automatically built for the following architectures:
 
-- **armv7:** This is a common architecture for embedded devices. Covers Raspberry Pi models up to and including the Raspberry Pi 3.
+- **armv7:** This is a common architecture for embedded devices. Covers Raspberry Pi models up to and including the **Raspberry Pi 3** and **Raspberry Pi 4**.
 
-- **armv8/arm64:** This is used by more recent, high-performance devices. You can run BlueOS on a Raspberry Pi 4, or in a computer with Apple Silicon.
+- **armv8/arm64:** This is used by more recent, high-performance devices. You can run BlueOS on a Raspberry Pi 4 (not recommended, use the armv7 image for a better experience), **Raspberry Pi 5**, or in a computer with Apple Silicon.
 
 - **amd64:** This is the architecture used by most desktop and laptop computers. A typical example is any modern PC running a 64-bit version of Linux. **Not fully supported.**
 
-Right now we officially support the Raspberry Pi 3 and 4, but the system should "just work" on all listed architectures with the correct docker binds.
+Right now we officially support the Raspberry Pi 3, 4 and 5, but the system should "just work" on all listed architectures with the correct docker binds.
 
 ## Development Environment
 
@@ -106,3 +108,13 @@ When restarting the development environment you may need to remove the volumes t
 ```bash
 docker compose -f core/compose/compose.yml down
 ```
+
+### Known issues
+
+Docker compose is not fully compatible with a standard installation of BlueOS.
+
+- MDNS may not work
+    - Access should be done via `0.0.0.0:80`
+- Some services are disabled
+    - cable_guy, wifi, commander
+    - This may result in errors on the frontend

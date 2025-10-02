@@ -6,7 +6,6 @@ import appdirs
 from loguru import logger
 
 from commonwealth.settings.bases.pykson_base import PyksonSettings
-from commonwealth.settings.exceptions import SettingsFromTheFuture
 
 
 class PyksonManager:
@@ -30,7 +29,7 @@ class PyksonManager:
         )
         self.config_folder.mkdir(parents=True, exist_ok=True)
         self.settings_type = settings_type
-        self._settings = None
+        self._settings: Optional[PyksonSettings] = None
         logger.debug(
             f"Starting {project_name} settings with {settings_type.__name__}, configuration path: {config_folder}"
         )
@@ -99,6 +98,10 @@ class PyksonManager:
     def load(self) -> None:
         """Load settings"""
 
+        # TODO: We could try to restore the settings from the temporary file if the main is not found or valid
+        # Clear temporary files that could be left from a previous operation
+        self._clear_temp_files()
+
         def get_settings_version_from_filename(filename: pathlib.Path) -> int:
             result = re.search(f"{PyksonManager.SETTINGS_NAME_PREFIX}(\\d+)", filename.name)
             assert result
@@ -120,7 +123,17 @@ class PyksonManager:
                 self._settings = PyksonManager.load_from_file(self.settings_type, valid_file)
                 logger.debug(f"Using {valid_file} as settings source")
                 return
-            except SettingsFromTheFuture as exception:
+            except Exception as exception:
                 logger.debug("Invalid settings, going to try another file:", exception)
 
-        self._settings = PyksonManager.load_from_file(self.settings_type, self.settings_file_path())
+        logger.debug("No valid settings found, using default settings")
+        self._settings = self.settings_type()
+        self.save()
+
+    def _clear_temp_files(self) -> None:
+        """Clear temporary files"""
+        for temp_file in self.config_folder.glob("*.tmp"):
+            try:
+                temp_file.unlink()
+            except Exception as exception:
+                logger.debug(f"Failed to clear temporary file {temp_file}: {exception}")

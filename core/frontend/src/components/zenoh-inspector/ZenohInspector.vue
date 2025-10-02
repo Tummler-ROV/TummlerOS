@@ -96,7 +96,14 @@
             </v-card-title>
 
             <v-card-text class="flex-grow-1 overflow-auto">
-              <pre>{{ formatMessage(current_message) }}</pre>
+              <template v-if="isVideoTopic">
+                <raw-video-player
+                  :video-data="videoData"
+                />
+              </template>
+              <template v-else>
+                <pre>{{ formatMessage(current_message) }}</pre>
+              </template>
             </v-card-text>
           </template>
           <div
@@ -112,20 +119,31 @@
     </v-row>
   </v-container>
 </template>
+
 <script lang="ts">
 import {
-  Config, Sample, SampleKind, Session, Subscriber,
+  Config, Encoding, Sample, SampleKind, Session, Subscriber, ZBytes,
 } from '@eclipse-zenoh/zenoh-ts'
+import { parse as parseMessageDefinition } from '@foxglove/rosmsg'
+import { MessageReader } from '@foxglove/rosmsg2-serialization'
+import axios from 'axios'
 import Vue from 'vue'
+
+import RawVideoPlayer from './RawVideoPlayer.vue'
 
 interface ZenohMessage {
   topic: string
-  payload: string
+  payload: ZBytes
+  encoding: string
+  schema: string | undefined
   timestamp: Date
 }
 
 export default Vue.extend({
   name: 'ZenohInspector',
+  components: {
+    RawVideoPlayer,
+  },
   data() {
     return {
       topics: [] as string[],
@@ -138,6 +156,7 @@ export default Vue.extend({
       session: null as Session | null,
       subscriber: null as Subscriber | null,
       liveliness_subscriber: null as Subscriber | null,
+      video_reader: null as MessageReader | null,
     }
   },
   computed: {
@@ -154,14 +173,30 @@ export default Vue.extend({
       if (!this.selected_topic) return null
       return this.messages[this.selected_topic] || null
     },
+    isVideoTopic(): boolean {
+      return this.selected_topic?.toLowerCase().includes('video') || false
+    },
+    videoData(): Uint8Array | null {
+      if (!this.current_message?.payload || !this.video_reader) {
+        return null
+      }
+      const msg: { data: Uint8Array } = this.video_reader.readMessage(this.current_message.payload.to_bytes())
+      return msg.data
+    },
   },
   async mounted() {
+    await this.setupVideoReader()
     await this.setupZenoh()
   },
   beforeDestroy() {
     this.disconnectZenoh()
   },
   methods: {
+    async setupVideoReader() {
+      const CompressedVideo = await axios.get('/msgs/CompressedVideo.msg').then((response) => response.data as string)
+      const definition = parseMessageDefinition(CompressedVideo)
+      this.video_reader = new MessageReader(definition)
+    },
     formatMessage(message: ZenohMessage | null): string {
       if (!message) return 'No messages received yet'
 
@@ -174,18 +209,22 @@ export default Vue.extend({
           : this.topic_liveliness[message.topic] ? 'Alive' : 'Dead',
         topic_type: this.topic_types[message.topic] || 'Unknown',
         message_type: this.topic_message_types[message.topic] || 'Unknown',
-        payload: message.payload,
+        payload: message.payload.toString(),
       }
 
-      // Try to parse the payload as JSON if possible
-      try {
-        formattedMessage.payload = JSON.parse(message.payload)
-      } catch (exception) {
-        // Keep the raw payload if it's not valid JSON
+      if (message.encoding === Encoding.APPLICATION_JSON.toString()) {
+        formattedMessage.payload = JSON.parse(message.payload.to_string())
+      } else if (message.encoding === Encoding.ZENOH_BYTES.toString()) {
+        try {
+          formattedMessage.payload = JSON.parse(message.payload.to_string())
+        } catch (exception) {
+          // Keep the raw payload if it's not valid JSON
+          formattedMessage.payload = message.payload.toString()
+        }
       }
-
       return JSON.stringify(formattedMessage, null, 2)
     },
+
     async setupZenoh() {
       try {
         const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
@@ -195,11 +234,16 @@ export default Vue.extend({
 
         // Setup regular message subscriber
         this.subscriber = await this.session.declare_subscriber('**', {
-          handler: (sample: Sample) => {
+          handler: async (sample: Sample) => {
             const topic = sample.keyexpr().toString()
+            const payload = sample.payload()
+            const [encoding, schema] = sample.encoding().toString().split(';')
+
             const message: ZenohMessage = {
               topic,
-              payload: sample.payload().to_string(),
+              payload,
+              encoding,
+              schema,
               timestamp: new Date(),
             }
 

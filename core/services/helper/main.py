@@ -24,10 +24,13 @@ from commonwealth.utils.apis import GenericErrorHandlingRoute, PrettyJSONRespons
 from commonwealth.utils.decorators import temporary_cache
 from commonwealth.utils.general import (
     blueos_version,
+    CpuType,
+    get_cpu_type,
     local_hardware_identifier,
     local_unique_identifier,
 )
 from commonwealth.utils.logs import InterceptHandler, init_logger
+from commonwealth.utils.sentry_config import init_sentry_async
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi_versioning import VersionedFastAPI, version
@@ -83,7 +86,7 @@ class Website(Enum):
     GitHub = {
         "hostname": "github.com",
         "path": "/",
-        "port": 80,
+        "port": 443,
     }
 
 
@@ -126,6 +129,11 @@ class ServiceInfo(BaseModel):
         if isinstance(other, ServiceInfo):
             return self.port == other.port
         return False
+
+    def max_attempts_reached(self) -> bool:
+        if self.port not in Helper.attempts_left:
+            return False
+        return bool(Helper.attempts_left[self.port] <= 0)
 
 
 class SpeedtestServer(BaseModel):
@@ -220,6 +228,9 @@ class Helper:
     PERIODICALLY_RESCAN_ALL_SERVICES = False
     # Wether or not we should rescan periodically just the 3rdparty services (extensions)
     PERIODICALLY_RESCAN_3RDPARTY_SERVICES = True
+
+    MAX_ATTEMPTS_LEFT = 3
+    attempts_left: Dict[int, int] = {}
 
     @staticmethod
     # pylint: disable=too-many-arguments,too-many-branches,too-many-locals
@@ -318,6 +329,13 @@ class Helper:
             "127.0.0.1", port=port, path="/", timeout=1.0, method="GET", follow_redirects=10
         )
         log_msg = f"Detecting service at port {port}"
+        if response.timeout:
+            service_attempts = Helper.attempts_left.get(port, Helper.MAX_ATTEMPTS_LEFT)
+            Helper.attempts_left[port] = service_attempts - 1
+
+            logger.debug(f"Timed out, attempting to detect service on port: {port}. Attempts left: {service_attempts}")
+
+            return info
         if response.status == http.client.BAD_REQUEST or response.decoded_data is None:
             # If not valid web server, documentation will not be available
             logger.debug(f"{log_msg}: Invalid: {response.status} - {response.decoded_data!r}")
@@ -423,14 +441,23 @@ class Helper:
             Helper.KNOWN_SERVICES = {service for service in Helper.KNOWN_SERVICES if service.port in ports}
 
         # Filter out ports we want to skip, as well as the ports from services we already know, assuming the services don't change,
-        known_ports = {service.port for service in Helper.KNOWN_SERVICES}
-        ports.difference_update(Helper.SKIP_PORTS, known_ports)
+        ignored_ports = {
+            service.port for service in Helper.KNOWN_SERVICES if service.valid or service.max_attempts_reached()
+        }
+        ports.difference_update(Helper.SKIP_PORTS, ignored_ports)
 
         # The detect_services run several of requests sequentially, so we are capping the amount of executors to lower the peaks on the CPU usage
-        with futures.ThreadPoolExecutor(max_workers=2) as executor:
+        if get_cpu_type() == CpuType.PI3 or len(ports) == 0:
+            max_workers = 2
+        else:
+            max_workers = len(ports)
+
+        with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             tasks = [executor.submit(Helper.detect_service, port) for port in ports]
             services = {task.result() for task in futures.as_completed(tasks)}
 
+        # Remove the detected services from the known services set so we can add the updated entries
+        Helper.KNOWN_SERVICES = Helper.KNOWN_SERVICES.difference(services)
         # Update our known services cache
         Helper.KNOWN_SERVICES.update(services)
         Helper.update_nginx(services)
@@ -443,7 +470,7 @@ class Helper:
         port = int(str(site.value["port"]))
         path = str(site.value["path"])
 
-        response = Helper.simple_http_request(hostname, port=port, path=path, timeout=10, method="GET")
+        response = Helper.simple_http_request(hostname, port=port, path=path, timeout=5, method="GET")
         website_status = WebsiteStatus(site=site, online=False)
 
         log_msg = f"Running check_website for '{hostname}:{port}'"
@@ -451,8 +478,8 @@ class Helper:
             logger.debug(f"{log_msg}: Online.")
             website_status.online = True
         else:
-            logger.warning(f"{log_msg}: Offline: {website_status.error}.")
             website_status.error = response.error
+            logger.warning(f"{log_msg}: Offline: {website_status.error}.")
 
         return website_status
 
@@ -677,12 +704,17 @@ async def root() -> HTMLResponse:
 
 port_to_service_map: Dict[int, str] = parse_nginx_file("/home/pi/tools/nginx/nginx.conf")
 
-if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
 
-    # Running uvicorn with log disabled so loguru can handle it
-    config = Config(app=app, loop=loop, host="0.0.0.0", port=Helper.PORT, log_config=None)
+async def main() -> None:
+    await init_sentry_async(SERVICE_NAME)
+
+    config = Config(app=app, host="0.0.0.0", port=Helper.PORT, log_config=None)
     server = Server(config)
 
-    loop.create_task(periodic())
-    loop.run_until_complete(server.serve())
+    asyncio.create_task(periodic())
+
+    await server.serve()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

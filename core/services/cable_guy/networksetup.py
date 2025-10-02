@@ -46,7 +46,7 @@ class AbstractNetworkHandler:
         # Check if IP already exists on the interface
         existing_addrs = self.ipr.get_addr(index=interface_index)
         for addr in existing_addrs:
-            if addr.get_attr("IFA_ADDRESS") == ip:
+            if str(addr.get_attr("IFA_ADDRESS")) == str(ip):
                 logger.info(f"IP '{ip}' already exists on interface '{interface_name}', skipping addition.")
                 return
 
@@ -192,6 +192,9 @@ class BookwormHandler(AbstractNetworkHandler):
                     f"Removing connection {profile_connection.uuid} ({profile_connection.connection_id}) for interface {interface_name}"
                 )
                 try:
+                    if profile_connection.uuid is None:
+                        raise ValueError("Invalid connection UUID")
+
                     await NetworkManagerSettings().delete_connection_by_uuid(profile_connection.uuid)
                 except Exception as e:
                     logger.error(
