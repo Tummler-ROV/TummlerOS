@@ -390,14 +390,10 @@
 <script lang="ts">
 import Vue, { defineAsyncComponent } from 'vue'
 
-<<<<<<< HEAD
 import tummler_white from '@/assets/img/tummler-logo-white.svg'
 import tummler_yellow from '@/assets/img/tummler-logo-yellow.svg'
-=======
-import blueos_blue from '@/assets/img/blueos-logo-blue.svg'
-import blueos_white from '@/assets/img/blueos-logo-white.svg'
 import consoleLogger from '@/libs/console-logger'
->>>>>>> 1.5.0-beta.14
+
 import settings from '@/libs/settings'
 import helper from '@/store/helper'
 import wifi from '@/store/wifi'
